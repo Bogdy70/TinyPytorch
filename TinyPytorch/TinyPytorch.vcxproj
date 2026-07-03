@@ -24,6 +24,7 @@
     <ProjectGuid>{66b07ca4-03c5-4e74-a71a-9a2519c888fe}</ProjectGuid>
     <RootNamespace>NeuralNetwork</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <ProjectName>TinyPytorch</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -120,6 +121,9 @@
     <Manifest>
       <EnableSegmentHeap>true</EnableSegmentHeap>
     </Manifest>
+    <CudaCompile>
+      <CodeGeneration>compute_89,sm_89;%(CodeGeneration)</CodeGeneration>
+    </CudaCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -145,12 +149,20 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="Matrix.cpp" />
-    <ClCompile Include="NeuralNetwork.cpp" />
+    <ClCompile Include="TinyPytorch.cpp" />
     <ClCompile Include="OpenMPBackend.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="data\cat\cat_shapes.txt" />
     <Text Include="data\mnist\shapes.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Backends.h" />
+    <ClInclude Include="CMatrix.cuh" />
+    <ClInclude Include="Matrix.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <CudaCompile Include="CMatrix.cu" />
   </ItemGroup>
   <ItemGroup>
     <None Include="data\cat\X_test.bin" />
@@ -161,14 +173,6 @@
     <None Include="data\mnist\X_train.bin" />
     <None Include="data\mnist\Y_test.bin" />
     <None Include="data\mnist\Y_train.bin" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="Backends.h" />
-    <ClInclude Include="CMatrix.cuh" />
-    <ClInclude Include="Matrix.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <CudaCompile Include="CMatrix.cu" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
