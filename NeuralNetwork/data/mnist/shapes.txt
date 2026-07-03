@@ -1,0 +1,4 @@
+X_train 784 5000
+Y_train 10 5000
+X_test 784 1000
+Y_test 10 1000

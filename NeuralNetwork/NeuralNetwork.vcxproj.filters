@@ -1,0 +1,87 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="data">
+      <UniqueIdentifier>{cdc62080-cb56-4dd4-b1a4-9accab7a84a0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="data\cat">
+      <UniqueIdentifier>{70eb6e41-cfb7-4469-a6c7-012f03475c58}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="data\mnist">
+      <UniqueIdentifier>{0c87f65f-075b-40f8-bbc5-87d4be7c963b}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="NeuralNetwork.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Matrix.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="OpenMPBackend.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="data\cat\cat_shapes.txt">
+      <Filter>data\cat</Filter>
+    </Text>
+    <Text Include="data\mnist\shapes.txt">
+      <Filter>data\mnist</Filter>
+    </Text>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="data\cat\X_test.bin">
+      <Filter>data\cat</Filter>
+    </None>
+    <None Include="data\cat\X_train.bin">
+      <Filter>data\cat</Filter>
+    </None>
+    <None Include="data\cat\Y_test.bin">
+      <Filter>data\cat</Filter>
+    </None>
+    <None Include="data\cat\Y_train.bin">
+      <Filter>data\cat</Filter>
+    </None>
+    <None Include="data\mnist\X_test.bin">
+      <Filter>data\mnist</Filter>
+    </None>
+    <None Include="data\mnist\X_train.bin">
+      <Filter>data\mnist</Filter>
+    </None>
+    <None Include="data\mnist\Y_test.bin">
+      <Filter>data\mnist</Filter>
+    </None>
+    <None Include="data\mnist\Y_train.bin">
+      <Filter>data\mnist</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Matrix.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Backends.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="CMatrix.cuh">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CudaCompile Include="CMatrix.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+  </ItemGroup>
+</Project>
