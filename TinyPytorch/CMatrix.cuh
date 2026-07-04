@@ -70,6 +70,8 @@ public:
 
 	static CMatrix randomUniform(const int rows, const int cols, const float start, const float end);
 
+	static CMatrix zeros(const int rows, const int cols);
+
 	static CMatrix sum(const CMatrix& A, int axis = -1);
 
 	static CMatrix powM(const CMatrix& A, float power);

@@ -493,6 +493,29 @@ CMatrix CMatrix::randomUniform(const int rows, const int cols, const float start
 	return R.toCUDA();
 }
 
+__global__ void zerosKernel(float* C, int N, int M)
+{
+	int i = blockIdx.y * blockDim.y + threadIdx.y;
+	int j = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (i < N && j < M)
+	{
+		C[i * M + j] = 0.0f;
+	}
+}
+
+CMatrix CMatrix::zeros(const int rows, const int cols)
+{
+	CMatrix Z(rows, cols);
+
+	dim3 block(16, 16);
+	dim3 grid((cols + block.x - 1) / block.x, (rows + block.y - 1) / block.y);
+
+	zerosKernel << <grid, block >> > (Z.rawData(), rows, cols);
+
+	return Z;
+}
+
 __global__ void sum0Kernel(const float* A, float* C, int N, int M)
 {
 	int col = blockIdx.x * blockDim.x + threadIdx.x;

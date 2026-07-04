@@ -111,6 +111,27 @@ struct Backward
     Backward(int dim): dZ(dim), dW(dim), dB(dim) {}
 };
 
+struct AdamState
+{
+    vector<CMatrix> VdW;
+    vector<CMatrix> VdB;
+    vector<CMatrix> SdW;
+    vector<CMatrix> SdB;
+    int t = 0;
+
+    AdamState(const Parameters& params) : VdW(size(params.W)), VdB(size(params.B)), SdW(size(params.W)), SdB(size(params.B))
+    {
+        int L = size(params.W);
+        for (int l = 1; l < L; l++)
+        {
+            VdW[l] = CMatrix::zeros(params.W[l].getRows(), params.W[l].getCols());
+            VdB[l] = CMatrix::zeros(params.B[l].getRows(), params.B[l].getCols());
+            SdW[l] = CMatrix::zeros(params.W[l].getRows(), params.W[l].getCols());
+            SdB[l] = CMatrix::zeros(params.B[l].getRows(), params.B[l].getCols());
+        }
+    }
+};
+
 struct Activation
 {
     CMatrix(*forward)(const CMatrix&);
