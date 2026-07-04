@@ -1059,6 +1059,16 @@ CMatrix operator-(float x, const CMatrix& A)
 	return C;
 }
 
+CMatrix operator+(float x, const CMatrix& A)
+{
+	return A + x;
+}
+
+CMatrix operator*(float x, const CMatrix& A)
+{
+	return A * x;
+}
+
 CMatrix CMatrix::clone() const
 {
 	CMatrix C(rows, cols);

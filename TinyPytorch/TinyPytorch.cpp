@@ -1,135 +1,120 @@
-// NeuralNetwork.cpp : This file contains the 'main' function. Program execution begins and ends there.
-//
-
 #include <iostream>
 #include <vector>
 #include <cmath>
 #include <string>
 #include <chrono>
 #include <stdexcept>
-#include "Backends.h"
+#include "Matrix.h"
 
 using namespace std;
 
-template <typename Backend>
-typename Backend::Mat sigmoid(const typename Backend::Mat& A)
+CMatrix sigmoid(const CMatrix& A)
 {
-    return Backend::scalarDiv(1.0f, Backend::scalarAdd(Backend::expM(Backend::scalarMul(A, -1.0f)), 1.0f));
+    return 1.0f / (1.0f + CMatrix::expM(-1.0f * A));
 }
 
-template <typename Backend>
-typename Backend::Mat softmax(const typename Backend::Mat& A)
+CMatrix softmax(const CMatrix& A)
 {
-    using Mat = typename Backend::Mat;
+    CMatrix exp_A = CMatrix::expM(A);
+    CMatrix sum_exp = CMatrix::sum(exp_A, 0);
 
-    Mat exp_A = Backend::expM(A);
-    Mat sum_exp = Backend::sum(exp_A, 0);
-
-    return Backend::broadcastDiv(exp_A, sum_exp);
+    return exp_A.broadcastDiv(sum_exp);
 }
 
-template <typename Backend>
-typename Backend::Mat der_tanh(const typename Backend::Mat& A)
+CMatrix der_tanh(const CMatrix& A)
 {
-    return Backend::scalarSub(1.0f, Backend::powM(Backend::tanhM(A), 2.0f));
+    return 1.0f - (CMatrix::tanhM(A) * CMatrix::tanhM(A));
 }
 
-template <typename Backend>
-typename Backend::Mat sign(const typename Backend::Mat& A)
+CMatrix sign(const CMatrix& A)
 {
     return (A > 0.0f) - (A < 0.0f);
 }
 
-template <typename Backend>
 struct Parameters
 {
-    vector<typename Backend::Mat> W;
-    vector<typename Backend::Mat> B;
+    vector<CMatrix> W;
+    vector<CMatrix> B;
 
     Parameters(int dim) : W(dim), B(dim) {}
 };
 
-template <typename Backend>
-float cost(const typename Backend::Mat& Y, const typename Backend::Mat& pred, const Parameters<Backend>& params, const float lambda_l1=0.0f, const float lambda_l2=0.0f)
+float cost(const CMatrix& Y, const CMatrix& pred, const Parameters& params, const float lambda_l1=0.0f, const float lambda_l2=0.0f)
 {
-    int m = Y.getCols();
+    float m = static_cast<float>(Y.getCols());
     int L = size(params.W);
     float epsilon = 1e-8f;
     float cost = 0.0f;
     float sumw = 0.0f;
-    typename Backend::Mat clippedPred = Backend::clipM(pred, epsilon, 1.0f - epsilon);
+    CMatrix clippedPred = CMatrix::clipM(pred, epsilon, 1.0f - epsilon);
 
     if (lambda_l1 < 0.0f || lambda_l2 < 0.0f)
         throw runtime_error("Lambda value cannot be less than zero.");
 
     if (Y.getRows() > 1)
-        cost = (-1.0f / static_cast<float>(m)) * Backend::toScalar(Backend::sum(Backend::mul(Y, Backend::logM(clippedPred))));
+        cost = (-1.0f / m) * CMatrix::sum(Y * CMatrix::logM(clippedPred)).toScalar();
     else
-        cost = (-1.0f / static_cast<float>(m)) * Backend::toScalar(Backend::sum(Backend::add(Backend::mul(Y, Backend::logM(clippedPred)), Backend::mul(Backend::scalarSub(1.0f, Y), Backend::logM(Backend::scalarSub(1.0f, clippedPred))))));
+        cost = (-1.0f / m) * CMatrix::sum(Y * CMatrix::logM(clippedPred) + (1 - Y) * CMatrix::logM(1 - clippedPred)).toScalar();
 
     if (lambda_l1 > 0.0f)
     {
         sumw = 0.0f;
         for (int l = 1; l < L; l++)
         {
-            sumw += Backend::toScalar(Backend::sum(Backend::absM(params.W[l])));
+            sumw += CMatrix::sum(CMatrix::absM(params.W[l])).toScalar();
         }
-        cost += (lambda_l1 / static_cast<float>(m)) * sumw;
+        cost += (lambda_l1 / m) * sumw;
     }
     if (lambda_l2 > 0.0f)
     {
         sumw = 0.0f;
         for (int l = 1; l < L; l++)
         {
-            sumw += Backend::toScalar(Backend::sum(Backend::mul(params.W[l], params.W[l])));
+            sumw += CMatrix::sum(params.W[l] * params.W[l]).toScalar();
         }
-        cost += (lambda_l2 / (2.0f * static_cast<float>(m))) * sumw;
+        cost += (lambda_l2 / (2.0f * m)) * sumw;
     }
     return cost;
 }
 
-template <typename Backend>
-float accuracy(const typename Backend::Mat& Y, const typename Backend::Mat& pred)
+float accuracy(const CMatrix& Y, const CMatrix& pred)
 {
     if (Y.getRows() > 1)
     {
-        typename Backend::Mat true_labels = Backend::argmax(Y);
-        typename Backend::Mat pred_labels = Backend::argmax(pred);
+        CMatrix true_labels = CMatrix::argmax(Y);
+        CMatrix pred_labels = CMatrix::argmax(pred);
 
-        return Backend::toScalar(Backend::sum(Backend::equals(true_labels, pred_labels))) / static_cast<float>(Y.getCols());
+        return CMatrix::sum(true_labels == pred_labels).toScalar() / static_cast<float>(Y.getCols());
     }
     else
     {
-        typename Backend::Mat pred_labels = Backend::greaterth(pred, 0.5f);
-        return Backend::toScalar(Backend::sum(Backend::equals(Y, pred_labels))) / static_cast<float>(Y.getCols());
+        CMatrix pred_labels = pred > 0.5f;
+        return CMatrix::sum(Y == pred_labels).toScalar() / static_cast<float>(Y.getCols());
     }
 }
 
-template <typename Backend>
 struct Forward
 {
-    vector<typename Backend::Mat> Z;
-    vector<typename Backend::Mat> A;
-    vector<typename Backend::Mat> D;
+    vector<CMatrix> Z;
+    vector<CMatrix> A;
+    vector<CMatrix> D;
 
     Forward(int dim) : Z(dim), A(dim), D(dim){}
 };
 
-template <typename Backend>
 struct Backward
 {
-    vector<typename Backend::Mat> dZ;
-    vector<typename Backend::Mat> dW;
-    vector<typename Backend::Mat> dB;
+    vector<CMatrix> dZ;
+    vector<CMatrix> dW;
+    vector<CMatrix> dB;
 
     Backward(int dim): dZ(dim), dW(dim), dB(dim) {}
 };
 
-template<typename Backend>
 struct Activation
 {
-    typename Backend::Mat(*forward)(const typename Backend::Mat&);
-    typename Backend::Mat(*derivate)(const typename Backend::Mat&);
+    CMatrix(*forward)(const CMatrix&);
+    CMatrix(*derivate)(const CMatrix&);
 
     Activation(): forward(nullptr), derivate(nullptr) {}
 
@@ -137,24 +122,23 @@ struct Activation
     {
         if (name == "relu")
         {
-            forward = Backend::relu;
-            derivate = Backend::der_relu;
+            forward = CMatrix::relu;
+            derivate = CMatrix::der_relu;
         }
         else if (name == "tanh")
         {
-            forward = Backend::tanhM;
-            derivate = der_tanh<Backend>;
+            forward = CMatrix::tanhM;
+            derivate = der_tanh;
         }
         else
             throw runtime_error("Invalid activation type. Please choose 'relu' or 'tanh'");
     }
 };
 
-template <typename Backend>
 struct NetworkConfig
 {
     vector<int> dims;
-    Activation<Backend> activation;
+    Activation activation;
 
     NetworkConfig(const vector<int>& dim_list): dims(dim_list), activation() {}
 
@@ -179,102 +163,97 @@ void printMnistImage(const Matrix& img, int sample_idx)
     }
 }
 
-template<typename Backend>
-Parameters<Backend> init_params(const vector<int>& dim_list)
+Parameters init_params(const vector<int>& dim_list)
 {
     int L = size(dim_list);
-    Parameters<Backend> params(L);
+    Parameters params(L);
 
     for (int l = 1; l < L; l++)
     {
-        params.W[l] = Backend::scalarMul(Backend::random(dim_list[l], dim_list[l - 1]), sqrt(2.0f / static_cast<float>(dim_list[l - 1])));
-        params.B[l] = typename Backend::Mat(dim_list[l], 1);
+        params.W[l] = CMatrix::random(dim_list[l], dim_list[l - 1]) * sqrt(2.0f / static_cast<float>(dim_list[l - 1]));
+        params.B[l] = CMatrix(dim_list[l], 1);
     }
 
     return params;
 }
 
-template<typename Backend>
-Forward<Backend> forward_pass(const Parameters<Backend>& params, const typename Backend::Mat& X, const string& activation, const float dropout=0.0f)
+Forward forward_pass(const Parameters& params, const CMatrix& X, const string& activation, const float dropout=0.0f)
 {
     if (dropout < 0.0f || dropout >= 1.0f)
         throw runtime_error("Dropout value must be between [0, 1).");
 
     int L = size(params.W);
-    Forward<Backend> forward_cache(L);
-    Activation<Backend> activ(activation);
-    typename Backend::Mat(*final_activ)(const typename Backend::Mat&);
+    Forward forward_cache(L);
+    Activation activ(activation);
+    CMatrix(*final_activ)(const CMatrix&);
 
-    forward_cache.A[0] = Backend::clone(X);
+    forward_cache.A[0] = X.clone();
 
     for (int l = 1; l < L-1; l++)
     {
-        forward_cache.Z[l] = Backend::broadcastAdd(Backend::matmul(params.W[l], forward_cache.A[l - 1]), params.B[l]);
+        forward_cache.Z[l] = params.W[l].matmul(forward_cache.A[l - 1]).broadcastAdd(params.B[l]);
         forward_cache.A[l] = activ.forward(forward_cache.Z[l]);
         if (dropout > 0.0f)
         {
-            forward_cache.D[l] = Backend::lessth(Backend::randomUniform(forward_cache.A[l].getRows(), forward_cache.A[l].getCols(), 0.0f, 1.0f), (1.0f - dropout));
-            forward_cache.A[l] = Backend::divScalar(Backend::mul(forward_cache.A[l], forward_cache.D[l]), (1.0f - dropout));
+            forward_cache.D[l] = CMatrix::randomUniform(forward_cache.A[l].getRows(), forward_cache.A[l].getCols(), 0.0f, 1.0f) < (1.0f - dropout);
+            forward_cache.A[l] = forward_cache.A[l] * forward_cache.D[l] / (1.0f - dropout);
         }
     }
-    forward_cache.Z[L - 1] = Backend::broadcastAdd(Backend::matmul(params.W[L - 1], forward_cache.A[L - 2]), params.B[L - 1]);
-    final_activ = forward_cache.Z[L - 1].getRows() > 1 ? softmax<Backend> : sigmoid<Backend>;
+    forward_cache.Z[L - 1] = params.W[L - 1].matmul(forward_cache.A[L - 2]).broadcastAdd(params.B[L - 1]);
+    final_activ = forward_cache.Z[L - 1].getRows() > 1 ? softmax : sigmoid;
     forward_cache.A[L - 1] = final_activ(forward_cache.Z[L - 1]);
 
     return forward_cache;
 }
 
-template<typename Backend>
-Backward<Backend> backpropagation(const Forward<Backend>& frd_cache, const Parameters<Backend>& params, const typename Backend::Mat& Y, const string& activation, const float dropout=0.0f, const float lambda_l1=0.0f, const float lambda_l2=0.0f)
+Backward backpropagation(const Forward& frd_cache, const Parameters& params, const CMatrix& Y, const string& activation, const float dropout=0.0f, const float lambda_l1=0.0f, const float lambda_l2=0.0f)
 {
     int L = size(frd_cache.A);
-    int m = Y.getCols();
-    Backward<Backend> grads(L);
-    Activation<Backend> activ(activation);
+    float m = static_cast<float>(Y.getCols());
+    Backward grads(L);
+    Activation activ(activation);
 
-    grads.dZ[L - 1] = Backend::sub(frd_cache.A[L - 1], Y);
-    grads.dW[L - 1] =  Backend::scalarMul(Backend::matmul(grads.dZ[L - 1], Backend::T(frd_cache.A[L - 2])), (1.0f / static_cast<float>(m)));
-    grads.dB[L - 1] =  Backend::scalarMul(Backend::sum(grads.dZ[L - 1], 1), (1.0f / static_cast<float>(m)));
+    grads.dZ[L - 1] = frd_cache.A[L - 1] - Y;
+    grads.dW[L - 1] = (1.0f / m) * grads.dZ[L - 1].matmul(frd_cache.A[L - 2].T());
+    grads.dB[L - 1] = (1.0f / m) * CMatrix::sum(grads.dZ[L - 1], 1);
     if (lambda_l1 > 0.0f)
-        grads.dW[L - 1] = Backend::add(grads.dW[L - 1], Backend::scalarMul(sign<Backend>(params.W[L - 1]), (lambda_l1 / static_cast<float>(m))));
+        grads.dW[L - 1] = grads.dW[L - 1] + ((lambda_l1 / m) * sign(params.W[L - 1]));
     if (lambda_l2 > 0.0f)
-        grads.dW[L - 1] = Backend::add(grads.dW[L - 1], Backend::scalarMul(params.W[L - 1], (lambda_l2 / static_cast<float>(m))));
+        grads.dW[L - 1] = grads.dW[L - 1] + ((lambda_l2 / m) * params.W[L - 1]);
 
     for (int l = L - 2; l > 0; l--)
     {
-        grads.dZ[l] = Backend::matmul(Backend::T(params.W[l + 1]), grads.dZ[l + 1]);
+        grads.dZ[l] = params.W[l + 1].T().matmul(grads.dZ[l + 1]);
         if (dropout > 0.0f)
-            grads.dZ[l] = Backend::divScalar(Backend::mul(grads.dZ[l], frd_cache.D[l]), (1.0f - dropout));
-        grads.dZ[l] = Backend::mul(grads.dZ[l], activ.derivate(frd_cache.Z[l]));
-        grads.dW[l] = Backend::scalarMul(Backend::matmul(grads.dZ[l], Backend::T(frd_cache.A[l - 1])), (1.0f / static_cast<float>(m)));
+            grads.dZ[l] = grads.dZ[l] * frd_cache.D[l] / (1.0f - dropout);
+        grads.dZ[l] = grads.dZ[l] * activ.derivate(frd_cache.Z[l]);
+        grads.dW[l] = (1.0f / m) * grads.dZ[l].matmul(frd_cache.A[l - 1].T());
         if (lambda_l1 > 0.0f)
-            grads.dW[l] = Backend::add(grads.dW[l], Backend::scalarMul(sign<Backend>(params.W[l]), (lambda_l1 / static_cast<float>(m))));
+            grads.dW[l] = grads.dW[l] + ((lambda_l1 / m) * sign(params.W[l]));
         if (lambda_l2 > 0.0f)
-            grads.dW[l] = Backend::add(grads.dW[l], Backend::scalarMul(params.W[l], (lambda_l2 / static_cast<float>(m))));
-        grads.dB[l] = Backend::scalarMul(Backend::sum(grads.dZ[l], 1), (1.0f / static_cast<float>(m)));
+            grads.dW[l] = grads.dW[l] + ((lambda_l2 / m) * params.W[l]);
+        grads.dB[l] = (1.0f / m) * CMatrix::sum(grads.dZ[l], 1);
     }
 
     return grads;
 }
 
-template<typename Backend>
-Parameters<Backend>& optimizer(Parameters<Backend>& params, const Backward<Backend>& grads, const float lr)
+Parameters& optimizer(Parameters& params, const Backward& grads, const float lr)
 {
     int L = size(params.W);
     for (int l = 1; l < L; l++)
     {
-        params.W[l] = Backend::sub(params.W[l], Backend::scalarMul(grads.dW[l], lr));
-        params.B[l] = Backend::sub(params.B[l], Backend::scalarMul(grads.dB[l], lr));
+        params.W[l] = params.W[l] - lr * grads.dW[l];
+        params.B[l] = params.B[l] - lr * grads.dB[l];
     }
 
     return params;
 }
 
-template<typename Backend>
-Parameters<Backend> train(const typename Backend::Mat& X_train,
-    const typename Backend::Mat& X_test,
-    const typename Backend::Mat& y_train,
-    const typename Backend::Mat& y_test,
+Parameters train(const CMatrix& X_train,
+    const CMatrix& X_test,
+    const CMatrix& y_train,
+    const CMatrix& y_test,
     const vector<int>& dim_list,
     const string& activation,
     const float lr,
@@ -284,7 +263,7 @@ Parameters<Backend> train(const typename Backend::Mat& X_train,
     const float lambda_l1=0.0f,
     const float lambda_l2=0.0f)
 {
-    Parameters<Backend> params = init_params<Backend>(dim_list);
+    Parameters params = init_params(dim_list);
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -292,20 +271,17 @@ Parameters<Backend> train(const typename Backend::Mat& X_train,
     {   
         if (epoch % viewing_rate == 0)
         {
-            if constexpr (std::is_same_v<Backend, CUDABackend>)
-            {
-                cudaDeviceSynchronize();
-            }
+            cudaDeviceSynchronize();
 
-            Forward<Backend> train_eval_cache = forward_pass<Backend>(params, X_train, activation);
-            Forward<Backend> frd_cache_test = forward_pass<Backend>(params, X_test, activation);
+            Forward train_eval_cache = forward_pass(params, X_train, activation);
+            Forward frd_cache_test = forward_pass(params, X_test, activation);
 
-            float train_objective = cost<Backend>(y_train, train_eval_cache.A[size(dim_list) - 1], params, lambda_l1, lambda_l2);
-            float train_cost = cost<Backend>(y_train, train_eval_cache.A[size(dim_list) - 1], params);
-            float train_acc = accuracy<Backend>(y_train, train_eval_cache.A[size(dim_list) - 1]);
+            float train_objective = cost(y_train, train_eval_cache.A[size(dim_list) - 1], params, lambda_l1, lambda_l2);
+            float train_cost = cost(y_train, train_eval_cache.A[size(dim_list) - 1], params);
+            float train_acc = accuracy(y_train, train_eval_cache.A[size(dim_list) - 1]);
 
-            float test_cost = cost<Backend>(y_test, frd_cache_test.A[size(dim_list) - 1], params);
-            float test_acc = accuracy<Backend>(y_test, frd_cache_test.A[size(dim_list) - 1]);
+            float test_cost = cost(y_test, frd_cache_test.A[size(dim_list) - 1], params);
+            float test_acc = accuracy(y_test, frd_cache_test.A[size(dim_list) - 1]);
 
             auto current_time = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> elapsed = current_time - start_time;
@@ -316,16 +292,15 @@ Parameters<Backend> train(const typename Backend::Mat& X_train,
         if (epoch == epochs)
             break;
 
-        Forward<Backend> frd_cache = forward_pass<Backend>(params, X_train, activation, dropout);
-        Backward<Backend> grads = backpropagation<Backend>(frd_cache, params, y_train, activation, dropout, lambda_l1, lambda_l2);
-        optimizer<Backend>(params, grads, lr);
+        Forward frd_cache = forward_pass(params, X_train, activation, dropout);
+        Backward grads = backpropagation(frd_cache, params, y_train, activation, dropout, lambda_l1, lambda_l2);
+        optimizer(params, grads, lr);
     }
 
     return params;
 }
 
-template <typename Backend>
-void predict(const Matrix& X_test, const Matrix& y_test, const Parameters<Backend>& params, const string& activation, int imgIdx)
+void predict(const Matrix& X_test, const Matrix& y_test, const Parameters& params, const string& activation, int imgIdx)
 {
     Matrix one_mnist(X_test.getRows(), 1);
 
@@ -347,18 +322,9 @@ void predict(const Matrix& X_test, const Matrix& y_test, const Parameters<Backen
 
     if (y_test.getRows() > 1)
     {
-        if constexpr (std::is_same_v<Backend, CUDABackend>)
-        {
-            Forward<Backend> frd_cache1 = forward_pass<Backend>(params, one_mnist.toCUDA(), activation);
+        Forward frd_cache1 = forward_pass(params, one_mnist.toCUDA(), activation);
 
-            pred_label = Backend::toScalar(Backend::argmax(frd_cache1.A[L - 1]));
-        }
-        else
-        {
-            Forward<Backend> frd_cache1 = forward_pass<Backend>(params, one_mnist, activation);
-
-            pred_label = Backend::toScalar(Backend::argmax(frd_cache1.A[L - 1]));
-        }
+        pred_label = CMatrix::argmax(frd_cache1.A[L - 1]).toScalar();
 
         int truth_label = Matrix::argmax(one_mnisty)(0, 0);
 
@@ -368,18 +334,9 @@ void predict(const Matrix& X_test, const Matrix& y_test, const Parameters<Backen
     }
     else
     {
-        if constexpr (std::is_same_v<Backend, CUDABackend>)
-        {
-            Forward<Backend> frd_cache1 = forward_pass<Backend>(params, one_mnist.toCUDA(), activation);
+        Forward frd_cache1 = forward_pass(params, one_mnist.toCUDA(), activation);
 
-            pred_label = Backend::greaterth(frd_cache1.A[L - 1], 0.5f).toCPU()(0, imgIdx);
-        }
-        else
-        {
-            Forward<Backend> frd_cache1 = forward_pass<Backend>(params, one_mnist, activation);
-
-            pred_label = Backend::greaterth(frd_cache1.A[L - 1], 0.5f)(0, imgIdx);
-        }
+        pred_label = (frd_cache1.A[L - 1] > 0.5f).toCPU()(0, imgIdx);
 
         cout << "\nTruth: " << y_test(0, imgIdx) << " || Pred: " << pred_label;
     }
@@ -424,43 +381,11 @@ int main()
         std::chrono::duration<double> elapsed;
 
 
-        /*cout << "Sequential cat dataset test\n\n";
-
-        start = std::chrono::high_resolution_clock::now();
-
-        Parameters<SequentialBackend> params1 = train<SequentialBackend>(X_train_cat, X_test_cat, y_train_cat, y_test_cat, dim_list, "tanh", 0.005f, 700, 100);
-
-        end = std::chrono::high_resolution_clock::now();
-
-        elapsed = end - start;
-
-        cout << "\nSequential cat training time: " << elapsed.count() << " seconds\n";
-
-        predict<SequentialBackend>(X_test_cat, y_test_cat, params1, "tanh", 7);*/
-
-        
-
-        /*cout << "\n\nOpenMP cat dataset test\n\n";
-
-        start = std::chrono::high_resolution_clock::now();
-
-        Parameters<OpenMPBackend> params2 = train<OpenMPBackend>(X_train_cat, X_test_cat, y_train_cat, y_test_cat, dim_list, "tanh", 0.005f, 700, 100, 0.8);
-
-        end = std::chrono::high_resolution_clock::now();
-
-        elapsed = end - start;
-
-        cout << "\nOpenMP cat training time: " << elapsed.count() << " seconds\n";
-
-        predict<OpenMPBackend>(X_test_cat, y_test_cat, params2, "tanh", 7);*/
-
-
-
         cout << "\n\nCUDA cat dataset test\n\n";
 
         start = std::chrono::high_resolution_clock::now();
 
-        Parameters<CUDABackend> params3 = train<CUDABackend>(X_train_cat.toCUDA(), X_test_cat.toCUDA(), y_train_cat.toCUDA(), y_test_cat.toCUDA(), dim_list, "tanh", 0.005f, 700, 100, 0.2, 0.0f, 0.01f);
+        Parameters params3 = train(X_train_cat.toCUDA(), X_test_cat.toCUDA(), y_train_cat.toCUDA(), y_test_cat.toCUDA(), dim_list, "tanh", 0.005f, 700, 100, 0.2, 0.0f, 0.01f);
 
         cudaDeviceSynchronize();
 
@@ -470,49 +395,17 @@ int main()
 
         cout << "\nCUDA cat training time: " << elapsed.count() << " seconds\n";
 
-        predict<CUDABackend>(X_test_cat, y_test_cat, params3, "tanh", 7);
-
+        predict(X_test_cat, y_test_cat, params3, "tanh", 7);
 
 
         dim_list = { X_train_mnist.getRows(), 100, 100, 200, y_train_mnist.getRows() };
-
-        /*cout << "\n\nSequential mnist dataset test\n\n";
-
-        start = std::chrono::high_resolution_clock::now();
-
-        Parameters<SequentialBackend> params4 = train<SequentialBackend>(X_train_mnist, X_test_mnist, y_train_mnist, y_test_mnist, dim_list, "relu", 0.01f, 700, 100);
-
-        end = std::chrono::high_resolution_clock::now();
-
-        elapsed = end - start;
-
-        cout << "\nSequential mnist training time: " << elapsed.count() << " seconds\n";
-
-        predict<SequentialBackend>(X_test_mnist, y_test_mnist, params4, "relu", 7);*/
-
-
-
-        /*cout << "\n\nOpenMP mnist dataset test\n\n";
-
-        start = std::chrono::high_resolution_clock::now();
-
-        Parameters<OpenMPBackend> params5 = train<OpenMPBackend>(X_train_mnist, X_test_mnist, y_train_mnist, y_test_mnist, dim_list, "relu", 0.01f, 700, 100);
-
-        end = std::chrono::high_resolution_clock::now();
-
-        elapsed = end - start;
-
-        cout << "\nOpenMP mnist training time: " << elapsed.count() << " seconds\n";
-        
-        predict<OpenMPBackend>(X_test_mnist, y_test_mnist, params5, "relu", 7);*/
-
 
 
         cout << "\n\nCUDA mnist dataset test\n\n";
 
         start = std::chrono::high_resolution_clock::now();
 
-        Parameters<CUDABackend> params6 = train<CUDABackend>(X_train_mnist.toCUDA(), X_test_mnist.toCUDA(), y_train_mnist.toCUDA(), y_test_mnist.toCUDA(), dim_list, "relu", 0.01f, 1000, 100, 0.0f, 0.0f, 0.01);
+        Parameters params6 = train(X_train_mnist.toCUDA(), X_test_mnist.toCUDA(), y_train_mnist.toCUDA(), y_test_mnist.toCUDA(), dim_list, "relu", 0.01f, 1000, 100, 0.0f, 0.0f, 0.01);
 
         cudaDeviceSynchronize();
 
@@ -522,7 +415,7 @@ int main()
 
         cout << "\nCUDA mnist training time: " << elapsed.count() << " seconds\n";
         
-        predict<CUDABackend>(X_test_mnist, y_test_mnist, params6, "relu", 7);
+        predict(X_test_mnist, y_test_mnist, params6, "relu", 7);
     }
     catch (const exception& e)
     {

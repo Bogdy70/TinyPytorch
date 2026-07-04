@@ -102,3 +102,7 @@ public:
 CMatrix operator/(float x, const CMatrix& A);
 
 CMatrix operator-(float x, const CMatrix& A);
+
+CMatrix operator+(float x, const CMatrix& A);
+
+CMatrix operator*(float x, const CMatrix& A);
