@@ -4,17 +4,11 @@
     <ClCompile Include="Matrix.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="OpenMPBackend.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="TinyPytorch.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Backends.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="CMatrix.cuh">
       <Filter>Header Files</Filter>
     </ClInclude>

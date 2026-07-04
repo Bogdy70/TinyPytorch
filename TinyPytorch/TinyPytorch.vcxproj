@@ -150,14 +150,12 @@
   <ItemGroup>
     <ClCompile Include="Matrix.cpp" />
     <ClCompile Include="TinyPytorch.cpp" />
-    <ClCompile Include="OpenMPBackend.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="data\cat\cat_shapes.txt" />
     <Text Include="data\mnist\shapes.txt" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Backends.h" />
     <ClInclude Include="CMatrix.cuh" />
     <ClInclude Include="Matrix.h" />
   </ItemGroup>
