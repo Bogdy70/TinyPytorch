@@ -6,7 +6,7 @@
 using namespace std;
 
 static random_device rd;
-static mt19937 gen(42);
+static mt19937 gen(rd());
 
 Matrix::Matrix() : rows(0), cols(0) {}
 
@@ -375,6 +375,11 @@ Matrix Matrix::T() const
     return Tr;
 }
 
+void Matrix::setSeed(const int seed)
+{
+    gen.seed(seed);
+}
+
 Matrix Matrix::random(const int rows, const int cols)
 {
     normal_distribution<float> dist(0.0f, 1.0f);
@@ -712,6 +717,7 @@ Matrix Matrix::clipM(const Matrix& A, float minValue, float maxValue)
 Matrix Matrix::clone() const
 {
     Matrix C(rows, cols);
+    C.setData(data);
 
     return C;
 }

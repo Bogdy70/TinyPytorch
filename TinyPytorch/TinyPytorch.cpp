@@ -192,7 +192,7 @@ Parameters init_params(const vector<int>& dim_list)
     for (int l = 1; l < L; l++)
     {
         params.W[l] = CMatrix::random(dim_list[l], dim_list[l - 1]) * sqrt(2.0f / static_cast<float>(dim_list[l - 1]));
-        params.B[l] = CMatrix(dim_list[l], 1);
+        params.B[l] = CMatrix::zeros(dim_list[l], 1);
     }
 
     return params;
@@ -271,6 +271,38 @@ Parameters& optimizer(Parameters& params, const Backward& grads, const float lr)
     return params;
 }
 
+Parameters& adam(Parameters& params, const Backward& grads, AdamState& state, const float lr, const float beta1, const float beta2, const float epsilon)
+{
+    if (beta1 < 0.0f || beta1 >= 1.0f)
+        throw runtime_error("Beta1 value must be between [0, 1).");
+    if (beta2 < 0.0f || beta2 >= 1.0f)
+        throw runtime_error("Beta2 value must be between [0, 1).");
+    if (epsilon <= 0.0f)
+        throw runtime_error("Epsilon must be bigger than 0.");
+    int L = size(params.W);
+    state.t++;
+    float beta1_correction = 1.0f - powf(beta1, state.t);
+    float beta2_correction = 1.0f - powf(beta2, state.t);
+    for (int l = 1; l < L; l++)
+    {
+        state.VdW[l] = beta1 * state.VdW[l] + (1.0f - beta1) * grads.dW[l];
+        state.VdB[l] = beta1 * state.VdB[l] + (1.0f - beta1) * grads.dB[l];
+        state.SdW[l] = beta2 * state.SdW[l] + (1.0f - beta2) * (grads.dW[l] * grads.dW[l]);
+        state.SdB[l] = beta2 * state.SdB[l] + (1.0f - beta2) * (grads.dB[l] * grads.dB[l]);
+
+        CMatrix VdW_corrected = state.VdW[l] / beta1_correction;
+        CMatrix VdB_corrected = state.VdB[l] / beta1_correction;
+
+        CMatrix SdW_corrected = state.SdW[l] / beta2_correction;
+        CMatrix SdB_corrected = state.SdB[l] / beta2_correction;
+
+        params.W[l] = params.W[l] - lr * VdW_corrected / (CMatrix::sqrtM(SdW_corrected) + epsilon);
+        params.B[l] = params.B[l] - lr * VdB_corrected / (CMatrix::sqrtM(SdB_corrected) + epsilon);
+    }
+
+    return params;
+}
+
 Parameters train(const CMatrix& X_train,
     const CMatrix& X_test,
     const CMatrix& y_train,
@@ -280,11 +312,15 @@ Parameters train(const CMatrix& X_train,
     const float lr,
     const int epochs,
     const int viewing_rate,
+    const float beta1 = 0.9f,
+    const float beta2 = 0.999f,
+    const float eps = 1e-8f,
     const float dropout=0.0f,
     const float lambda_l1=0.0f,
     const float lambda_l2=0.0f)
 {
     Parameters params = init_params(dim_list);
+    AdamState state(params);
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -315,7 +351,8 @@ Parameters train(const CMatrix& X_train,
 
         Forward frd_cache = forward_pass(params, X_train, activation, dropout);
         Backward grads = backpropagation(frd_cache, params, y_train, activation, dropout, lambda_l1, lambda_l2);
-        optimizer(params, grads, lr);
+        //optimizer(params, grads, lr);
+        adam(params, grads, state, lr, beta1, beta2, eps);
     }
 
     return params;
@@ -406,7 +443,9 @@ int main()
 
         start = std::chrono::high_resolution_clock::now();
 
-        Parameters params3 = train(X_train_cat.toCUDA(), X_test_cat.toCUDA(), y_train_cat.toCUDA(), y_test_cat.toCUDA(), dim_list, "tanh", 0.005f, 700, 100, 0.2, 0.0f, 0.01f);
+        Matrix::setSeed(42);
+
+        Parameters params3 = train(X_train_cat.toCUDA(), X_test_cat.toCUDA(), y_train_cat.toCUDA(), y_test_cat.toCUDA(), dim_list, "tanh", 0.0001f, 700, 100, 0.9f, 0.999f, 1e-8f, 0.2f, 0.0f, 0.01f);
 
         cudaDeviceSynchronize();
 
@@ -426,7 +465,9 @@ int main()
 
         start = std::chrono::high_resolution_clock::now();
 
-        Parameters params6 = train(X_train_mnist.toCUDA(), X_test_mnist.toCUDA(), y_train_mnist.toCUDA(), y_test_mnist.toCUDA(), dim_list, "relu", 0.01f, 1000, 100, 0.0f, 0.0f, 0.01);
+        Matrix::setSeed(123);
+
+        Parameters params6 = train(X_train_mnist.toCUDA(), X_test_mnist.toCUDA(), y_train_mnist.toCUDA(), y_test_mnist.toCUDA(), dim_list, "relu", 0.0001f, 1000, 100, 0.9f, 0.999f, 1e-8f, 0.0f, 0.0f, 0.01f);
 
         cudaDeviceSynchronize();
 
