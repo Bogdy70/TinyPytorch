@@ -70,6 +70,8 @@ public:
 
     Matrix T() const;
 
+    static void setSeed(const int seed);
+
     static Matrix random(const int rows, const int cols);
 
     static Matrix randomUniform(const int rows, const int cols, const float start, const float end);
