@@ -158,9 +158,11 @@
   <ItemGroup>
     <ClInclude Include="CMatrix.cuh" />
     <ClInclude Include="Matrix.h" />
+    <ClInclude Include="Tensor.cuh" />
   </ItemGroup>
   <ItemGroup>
     <CudaCompile Include="CMatrix.cu" />
+    <CudaCompile Include="Tensor.cu" />
   </ItemGroup>
   <ItemGroup>
     <None Include="data\cat\X_test.bin" />

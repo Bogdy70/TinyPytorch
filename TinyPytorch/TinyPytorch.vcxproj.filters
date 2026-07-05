@@ -15,6 +15,9 @@
     <ClInclude Include="Matrix.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Tensor.cuh">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Text Include="data\cat\cat_shapes.txt">
@@ -69,6 +72,9 @@
   </ItemGroup>
   <ItemGroup>
     <CudaCompile Include="CMatrix.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="Tensor.cu">
       <Filter>Source Files</Filter>
     </CudaCompile>
   </ItemGroup>
