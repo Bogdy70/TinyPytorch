@@ -7,6 +7,9 @@
     <ClCompile Include="TinyPytorch.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="CPUTensor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="CMatrix.cuh">
@@ -16,6 +19,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Tensor.cuh">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="CPUTensor.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

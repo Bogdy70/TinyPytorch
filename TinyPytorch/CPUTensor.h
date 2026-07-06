@@ -1,16 +1,14 @@
 #pragma once
 
-#include <cuda_runtime.h>
 #include <vector>
+#include "Tensor.cuh"
 
 using namespace std;
 
-class CPUTensor;
-
-class Tensor
+class CPUTensor
 {
 private:
-	float* data = nullptr;
+	vector<float> data;
 	vector<int> shape;
 	vector<int> stride;
 	int total;
@@ -19,17 +17,13 @@ private:
 	static vector<int> calculateStride(const vector<int>& shape);
 
 public:
-	Tensor();
+	CPUTensor();
 
-	Tensor(const vector<int>& shape);
+	CPUTensor(const vector<int>& shape);
 
-	~Tensor();
+	float& operator()(int index);
 
-	Tensor(const Tensor&) = delete;
-	Tensor& operator=(const Tensor&) = delete;
-
-	Tensor(Tensor&& other) noexcept;
-	Tensor& operator=(Tensor&& other) noexcept;
+	const float& operator()(int index) const;
 
 	float* rawData();
 
@@ -43,5 +37,5 @@ public:
 
 	const vector<int>& getStride() const;
 
-	CPUTensor toCPU() const;
+	Tensor toCUDA() const;
 };
