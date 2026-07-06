@@ -1,4 +1,5 @@
 #include "Tensor.cuh"
+#include "CPUTensor.h"
 #include <stdexcept>
 
 Tensor::Tensor(): data(nullptr), shape(), stride(), total(0) {}
@@ -87,4 +88,23 @@ int Tensor::size() const
 int Tensor::dim() const
 {
 	return static_cast<int>(shape.size());
+}
+
+const vector<int>& Tensor::getShape() const
+{
+	return shape;
+}
+
+const vector<int>& Tensor::getStride() const
+{
+	return stride;
+}
+
+CPUTensor Tensor::toCPU() const
+{
+	CPUTensor T(shape);
+
+	cudaMemcpy(T.rawData(), data, total * sizeof(float), cudaMemcpyDeviceToHost);
+
+	return T;
 }

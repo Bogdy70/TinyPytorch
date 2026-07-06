@@ -148,6 +148,7 @@
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="CPUTensor.cpp" />
     <ClCompile Include="Matrix.cpp" />
     <ClCompile Include="TinyPytorch.cpp" />
   </ItemGroup>
@@ -157,6 +158,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="CMatrix.cuh" />
+    <ClInclude Include="CPUTensor.h" />
     <ClInclude Include="Matrix.h" />
     <ClInclude Include="Tensor.cuh" />
   </ItemGroup>
