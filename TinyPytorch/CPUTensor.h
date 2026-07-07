@@ -43,4 +43,10 @@ public:
 	Tensor toCUDA() const;
 
 	void print() const;
+
+	static void setSeed(int seed);
+
+	static CPUTensor random(const vector<int>& shape);
+
+	static CPUTensor randomUniform(const vector<int>& shape, float start, float end);
 };
