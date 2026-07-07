@@ -80,6 +80,16 @@ const float* CMatrix::rawData() const
 	return data;
 }
 
+CMatrix& CMatrix::operator=(const std::vector<float>& X)
+{
+	if (X.size() != rows * cols)
+		throw std::runtime_error("Sizes do not match!");
+	
+	cudaMemcpy(data, X.data(), rows * cols * sizeof(float), cudaMemcpyHostToDevice);
+
+	return *this;
+}
+
 Matrix CMatrix::toCPU() const
 {
 	Matrix C(rows, cols);

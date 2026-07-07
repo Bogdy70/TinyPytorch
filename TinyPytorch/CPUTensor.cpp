@@ -98,11 +98,13 @@ const float* CPUTensor::rawData() const
 	return data.data();
 }
 
-void CPUTensor::operator=(const vector<float>& X)
+CPUTensor& CPUTensor::operator=(const vector<float>& X)
 {
 	if (X.size() != total)
 		throw runtime_error("Sizes dont match!");
 	data = X;
+
+	return *this;
 }
 
 int CPUTensor::size() const

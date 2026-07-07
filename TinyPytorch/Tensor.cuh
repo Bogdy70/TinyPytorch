@@ -35,6 +35,8 @@ public:
 
 	const float* rawData() const;
 
+	Tensor& operator=(const std::vector<float>& X);
+
 	int size() const;
 
 	int dim() const;
