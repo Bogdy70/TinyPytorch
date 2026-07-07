@@ -28,9 +28,7 @@ public:
 
     const float* rawData() const;
 
-    void setData(const std::vector<float>& X);
-
-    void operator=(const std::vector<float>& X);
+    Matrix& operator=(const std::vector<float>& X);
 
     int size() const;
 

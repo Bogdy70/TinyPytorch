@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cuda_runtime.h>
+#include <vector>
 
 class Matrix;
 
@@ -33,6 +34,8 @@ public:
 	float* rawData();
 
 	const float* rawData() const;
+
+	CMatrix& operator=(const std::vector<float>& X);
 
 	Matrix toCPU() const;
 

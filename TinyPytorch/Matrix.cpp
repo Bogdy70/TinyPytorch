@@ -42,18 +42,13 @@ const float* Matrix::rawData() const
     return data.data();
 }
 
-void Matrix::setData(const vector<float>& X)
-{
-    if (X.size() != rows * cols)
-        throw runtime_error("Out of bounds");
-    data = X;
-}
-
-void Matrix::operator=(const vector<float>& X)
+Matrix& Matrix::operator=(const vector<float>& X)
 {
     if (X.size() != rows * cols)
         throw runtime_error("Out of bounds!");
     data = X;
+
+    return *this;
 }
 
 int Matrix::size() const
@@ -724,7 +719,7 @@ Matrix Matrix::clipM(const Matrix& A, float minValue, float maxValue)
 Matrix Matrix::clone() const
 {
     Matrix C(rows, cols);
-    C.setData(data);
+    C = data;
 
     return C;
 }

@@ -80,6 +80,16 @@ const float* Tensor::rawData() const
 	return data;
 }
 
+Tensor& Tensor::operator=(const vector<float>& X)
+{
+	if (X.size() != total)
+		throw runtime_error("Sizes do not match!");
+
+	cudaMemcpy(data, X.data(), total * sizeof(float), cudaMemcpyHostToDevice);
+
+	return *this;
+}
+
 int Tensor::size() const
 {
 	return total;

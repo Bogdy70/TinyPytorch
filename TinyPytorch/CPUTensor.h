@@ -30,7 +30,7 @@ public:
 
 	const float* rawData() const;
 
-	void operator=(const vector<float>& X);
+	CPUTensor& operator=(const vector<float>& X);
 
 	int size() const;
 
