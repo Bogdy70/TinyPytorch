@@ -501,7 +501,7 @@ int main()
 
         cout << "\n";
 
-        S.reshape({ 3, 2, 3 });
+        S.reshape({ 3, 6 });
         S.toCPU().print();
 
         cout << "\n\nResize test\n\n";
@@ -514,6 +514,21 @@ int main()
 
         Rs.resize({ 2, 3, 2, 2 });
         Rs.toCPU().print();
+
+        cout << "\n\nMul test\n\n";
+
+        Tensor A({ 2, 3, 3 });
+        A = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18 };
+        Tensor B({ 2, 3, 3 });
+        B = { 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1 };
+
+        Tensor C = A * B;
+        C.toCPU().print();
+
+        cout << "\n\nDiv test\n\n";
+
+        Tensor C1 = A / B;
+        C1.toCPU().print();
 
         cout << "\n\nCUDA cat dataset test\n\n";
 
