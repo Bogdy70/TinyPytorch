@@ -5,6 +5,7 @@
 #include <chrono>
 #include <stdexcept>
 #include "Matrix.h"
+#include "CPUTensor.h"
 
 using namespace std;
 
@@ -438,6 +439,26 @@ int main()
         auto end = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> elapsed;
 
+        cout << "\n\nTensor test\n\n";
+
+        Tensor T({ 2, 3, 4, 2 });
+        CPUTensor CPUT = T.toCPU();
+        CPUT = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48 };
+        CPUT.print();
+
+        cout << "\n\nMatrix test\n\n";
+
+        CMatrix M(4, 2);
+        Matrix CPUM = M.toCPU();
+        CPUM = { 1, 2, 3, 4, 5, 6, 7, 8 };
+        for (int i = 0; i < CPUM.getRows(); i++)
+        {
+            for (int j = 0; j < CPUM.getCols(); j++)
+            {
+                cout << CPUM(i, j) << " ";
+            }
+            cout << "\n";
+        }
 
         cout << "\n\nCUDA cat dataset test\n\n";
 

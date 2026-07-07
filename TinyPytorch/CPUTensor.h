@@ -15,6 +15,7 @@ private:
 
 	static int calculateTotal(const vector<int>& shape);
 	static vector<int> calculateStride(const vector<int>& shape);
+	void recursivePrint(int dim, int offset, int indent) const;
 
 public:
 	CPUTensor();
@@ -29,6 +30,8 @@ public:
 
 	const float* rawData() const;
 
+	void operator=(const vector<float>& X);
+
 	int size() const;
 
 	int dim() const;
@@ -38,4 +41,6 @@ public:
 	const vector<int>& getStride() const;
 
 	Tensor toCUDA() const;
+
+	void print() const;
 };
