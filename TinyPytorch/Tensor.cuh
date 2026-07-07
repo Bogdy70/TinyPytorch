@@ -54,4 +54,8 @@ public:
 	static Tensor random(const vector<int>& shape);
 
 	static Tensor randomUniform(const vector<int>& shape, float start, float end);
+
+	Tensor& reshape(const vector<int>& shape);
+
+	Tensor& resize(const vector<int>& shape);
 };

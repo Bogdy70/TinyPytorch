@@ -157,3 +157,39 @@ Tensor Tensor::fill(const vector<int>& shape, float value)
 
 	return T;
 }
+
+Tensor& Tensor::reshape(const vector<int>& shape)
+{
+	if (calculateTotal(shape) != total)
+		throw runtime_error("Sizes do not match!");
+
+	this->shape = shape;
+	this->stride = calculateStride(shape);
+
+	return *this;
+}
+
+__global__ void resizeKernel(float* X, float* A, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		X[idx] = A[idx];
+	}
+}
+
+Tensor& Tensor::resize(const vector<int>& shape)
+{
+	Tensor X = zeros(shape);
+
+	int block = 256;
+	
+	int copySize = (total <= X.total) ? total : X.total;
+	int grid = (copySize + block - 1) / block;
+	resizeKernel << <grid, block >> > (X.rawData(), data, copySize);
+
+	*this = move(X);
+
+	return *this;
+}

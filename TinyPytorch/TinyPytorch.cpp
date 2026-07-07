@@ -493,6 +493,28 @@ int main()
         Tensor F = Tensor::fill({ 3, 3, 2 }, 3.7f);
         F.toCPU().print();
 
+        cout << "\n\nReshape test\n\n";
+
+        Tensor S({ 2, 3, 3 });
+        S = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18 };
+        S.toCPU().print();
+
+        cout << "\n";
+
+        S.reshape({ 3, 2, 3 });
+        S.toCPU().print();
+
+        cout << "\n\nResize test\n\n";
+
+        Tensor Rs({ 2, 3, 3 });
+        Rs = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18 };
+        Rs.toCPU().print();
+
+        cout << "\n";
+
+        Rs.resize({ 2, 3, 2, 2 });
+        Rs.toCPU().print();
+
         cout << "\n\nCUDA cat dataset test\n\n";
 
         start = std::chrono::high_resolution_clock::now();
