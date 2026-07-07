@@ -58,4 +58,8 @@ public:
 	Tensor& reshape(const vector<int>& shape);
 
 	Tensor& resize(const vector<int>& shape);
+
+	Tensor operator*(const Tensor& B) const;
+
+	Tensor operator/(const Tensor& B) const;
 };

@@ -193,3 +193,53 @@ Tensor& Tensor::resize(const vector<int>& shape)
 
 	return *this;
 }
+
+__global__ void mulKernel(const float* A, const float* B, float* C, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		C[idx] = A[idx] * B[idx];
+	}
+}
+
+Tensor Tensor::operator*(const Tensor& B) const
+{
+	if (shape != B.shape)
+		throw runtime_error("Shapes do not match!");
+
+	Tensor C(shape);
+
+	int block = 256;
+	int grid = (total + block - 1) / block;
+
+	mulKernel << <grid, block >> > (data, B.rawData(), C.rawData(), total);
+
+	return C;
+}
+
+__global__ void divKernel(const float* A, const float* B, float* C, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		C[idx] = A[idx] / B[idx];
+	}
+}
+
+Tensor Tensor::operator/(const Tensor& B) const
+{
+	if (shape != B.shape)
+		throw runtime_error("Shapes do not match!");
+
+	Tensor C(shape);
+
+	int block = 256;
+	int grid = (total + block - 1) / block;
+
+	divKernel << <grid, block >> > (data, B.rawData(), C.rawData(), total);
+
+	return C;
+}
