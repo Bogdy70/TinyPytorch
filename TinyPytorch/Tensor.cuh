@@ -46,4 +46,12 @@ public:
 	const vector<int>& getStride() const;
 
 	CPUTensor toCPU() const;
+
+	static Tensor zeros(const vector<int>& shape);
+
+	static Tensor fill(const vector<int>& shape, float value);
+
+	static Tensor random(const vector<int>& shape);
+
+	static Tensor randomUniform(const vector<int>& shape, float start, float end);
 };

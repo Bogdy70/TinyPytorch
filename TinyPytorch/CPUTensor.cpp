@@ -1,6 +1,10 @@
 #include "CPUTensor.h";
 #include <stdexcept>
 #include <iostream>
+#include <random>
+
+static random_device rd;
+static mt19937 gen(rd());
 
 CPUTensor::CPUTensor(): data(), shape(), stride(), total(0) {}
 
@@ -140,4 +144,33 @@ void CPUTensor::print() const
 {
 	recursivePrint(0, 0, 0);
 	cout << "\n";
+}
+
+void CPUTensor::setSeed(int seed)
+{
+	gen.seed(seed);
+}
+
+CPUTensor CPUTensor::random(const vector<int>& shape)
+{
+	normal_distribution<float> dist(0.0f, 1.0f);
+
+	CPUTensor T(shape);
+
+	for (int i = 0; i < T.size(); i++)
+		T(i) = dist(gen);
+
+	return T;
+}
+
+CPUTensor CPUTensor::randomUniform(const vector<int>& shape, float start, float end)
+{
+	uniform_real_distribution<float> dist(start, end);
+
+	CPUTensor T(shape);
+
+	for (int i = 0; i < T.size(); i++)
+		T(i) = dist(gen);
+
+	return T;
 }

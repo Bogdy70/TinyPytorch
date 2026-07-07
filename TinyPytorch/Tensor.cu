@@ -118,3 +118,42 @@ CPUTensor Tensor::toCPU() const
 
 	return T;
 }
+
+Tensor Tensor::zeros(const vector<int>& shape)
+{
+	Tensor T(shape);
+	cudaMemset(T.data, 0, T.size() * sizeof(float));
+	return T;
+}
+
+Tensor Tensor::random(const vector<int>& shape)
+{
+	return CPUTensor::random(shape).toCUDA();
+}
+
+Tensor Tensor::randomUniform(const vector<int>& shape, float start, float end)
+{
+	return CPUTensor::randomUniform(shape, start, end).toCUDA();
+}
+
+__global__ void fillKernel(float* T, int size, float value)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		T[idx] = value;
+	}
+}
+
+Tensor Tensor::fill(const vector<int>& shape, float value)
+{
+	Tensor T(shape);
+
+	int block = 256;
+	int grid = (T.size() + block - 1) / block;
+
+	fillKernel << <grid, block >> > (T.rawData(), T.size(), value);
+
+	return T;
+}

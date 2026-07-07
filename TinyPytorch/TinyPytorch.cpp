@@ -460,6 +460,39 @@ int main()
             cout << "\n";
         }
 
+        cout << "\n\nZeros test\n\n";
+
+        Tensor Z = Tensor::zeros({ 2, 3, 3, 3 });
+        Z.toCPU().print();
+
+
+        cout << "\n\nRandom test\n\n";
+
+        CPUTensor R = CPUTensor::random({ 2, 3, 3 });
+        R.print();
+
+        cout << "\n";
+
+        CPUTensor RU = CPUTensor::randomUniform({ 1, 3, 3 }, 0.0f, 2.0f);
+        RU.print();
+
+        cout << "\n";
+
+        CPUTensor::setSeed(42);
+        Tensor RC = Tensor::random({ 1, 3, 3 });
+        RC.toCPU().print();
+
+        cout << "\n";
+        
+        CPUTensor::setSeed(42);
+        Tensor RC1 = Tensor::random({ 2, 2, 3 });
+        RC1.toCPU().print();
+
+        cout << "\n\nFill test\n\n";
+
+        Tensor F = Tensor::fill({ 3, 3, 2 }, 3.7f);
+        F.toCPU().print();
+
         cout << "\n\nCUDA cat dataset test\n\n";
 
         start = std::chrono::high_resolution_clock::now();
@@ -498,7 +531,7 @@ int main()
 
         cout << "\nCUDA mnist training time: " << elapsed.count() << " seconds\n";
         
-        predict(X_test_mnist, y_test_mnist, params6, "relu", 7);
+        predict(X_test_mnist, y_test_mnist, params6, "relu", 101);
     }
     catch (const exception& e)
     {
