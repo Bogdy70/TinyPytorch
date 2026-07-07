@@ -49,6 +49,13 @@ void Matrix::setData(const vector<float>& X)
     data = X;
 }
 
+void Matrix::operator=(const vector<float>& X)
+{
+    if (X.size() != rows * cols)
+        throw runtime_error("Out of bounds!");
+    data = X;
+}
+
 int Matrix::size() const
 {
     return rows * cols;

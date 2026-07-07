@@ -30,6 +30,8 @@ public:
 
     void setData(const std::vector<float>& X);
 
+    void operator=(const std::vector<float>& X);
+
     int size() const;
 
     CMatrix toCUDA() const;

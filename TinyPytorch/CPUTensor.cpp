@@ -1,5 +1,6 @@
 #include "CPUTensor.h";
 #include <stdexcept>
+#include <iostream>
 
 CPUTensor::CPUTensor(): data(), shape(), stride(), total(0) {}
 
@@ -31,6 +32,46 @@ vector<int> CPUTensor::calculateStride(const vector<int>& shape)
 	return res;
 }
 
+void CPUTensor::recursivePrint(int dim, int offset, int indent) const
+{
+	int rank = static_cast<int>(shape.size());
+
+	if (rank == 0)
+	{
+		cout << data[0];
+		return;
+	}
+
+	if (dim == rank - 1)
+	{
+		cout << "[";
+		for (int i = 0; i < shape[dim]; i++)
+		{
+			cout << data[offset + i * stride[dim]];
+
+			if (i != shape[dim] - 1)
+				cout << ", ";
+		}
+		cout << "]";
+		return;
+	}
+
+	cout << "[";
+	for (int i = 0; i < shape[dim]; i++)
+	{
+		int new_offset = offset + i * stride[dim];
+
+		if (i > 0)
+		{
+			cout << ",\n";
+			cout << string(indent + 1, ' ');
+		}
+
+		recursivePrint(dim + 1, new_offset, indent + 1);
+	}
+	cout << "]";
+}
+
 CPUTensor::CPUTensor(const vector<int>& shape) : data(), shape(shape), stride(calculateStride(shape)), total(0)
 {
 	total = calculateTotal(shape);
@@ -55,6 +96,13 @@ float* CPUTensor::rawData()
 const float* CPUTensor::rawData() const
 {
 	return data.data();
+}
+
+void CPUTensor::operator=(const vector<float>& X)
+{
+	if (X.size() != total)
+		throw runtime_error("Sizes dont match!");
+	data = X;
 }
 
 int CPUTensor::size() const
@@ -84,4 +132,10 @@ Tensor CPUTensor::toCUDA() const
 	cudaMemcpy(T.rawData(), data.data(), total * sizeof(float), cudaMemcpyHostToDevice);
 
 	return T;
+}
+
+void CPUTensor::print() const
+{
+	recursivePrint(0, 0, 0);
+	cout << "\n";
 }
