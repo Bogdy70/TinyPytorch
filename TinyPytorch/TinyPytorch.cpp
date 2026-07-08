@@ -522,13 +522,44 @@ int main()
         Tensor B({ 2, 3, 3 });
         B = { 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1 };
 
-        Tensor C = A * B;
+        Tensor C = B * A;
         C.toCPU().print();
 
         cout << "\n\nDiv test\n\n";
 
-        Tensor C1 = A / B;
+        Tensor C1 = B / B;
         C1.toCPU().print();
+
+        cout << "\n\nAdd test\n\n";
+
+        Tensor C2 = B + A;
+        C2.toCPU().print();
+
+        cout << "\n\nSub test\n\n";
+
+        Tensor C3 = B - A;
+        C3.toCPU().print();
+
+        cout << "\n\nScalar mul test\n\n";
+
+        Tensor C4 = 2.0f * A;
+        C4.toCPU().print();
+
+        cout << "\n\nScalar div test\n\n";
+
+        Tensor C5 = 2.0f / B;
+        C5.toCPU().print();
+
+        cout << "\n\nScalar add test\n\n";
+
+        Tensor C6 = 7.0f + B;
+        C6.toCPU().print();
+
+        cout << "\n\nScalar sub test\n\n";
+
+        Tensor C7 = 8.0f - A;
+        C7.toCPU().print();
+
 
         cout << "\n\nCUDA cat dataset test\n\n";
 
