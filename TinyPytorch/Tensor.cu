@@ -243,3 +243,198 @@ Tensor Tensor::operator/(const Tensor& B) const
 
 	return C;
 }
+
+__global__ void addKernel(const float* A, const float* B, float* C, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		C[idx] = A[idx] + B[idx];
+	}
+}
+
+Tensor Tensor::operator+(const Tensor& B) const
+{
+	if (shape != B.shape)
+		throw runtime_error("Shapes do not match!");
+
+	Tensor C(shape);
+
+	int block = 256;
+	int grid = (total + block - 1) / block;
+
+	addKernel << <grid, block >> > (data, B.rawData(), C.rawData(), total);
+
+	return C;
+}
+
+__global__ void subKernel(const float* A, const float* B, float* C, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		C[idx] = A[idx] - B[idx];
+	}
+}
+
+Tensor Tensor::operator-(const Tensor& B) const
+{
+	if (shape != B.shape)
+		throw runtime_error("Shapes do not match!");
+
+	Tensor C(shape);
+
+	int block = 256;
+	int grid = (total + block - 1) / block;
+
+	subKernel << <grid, block >> > (data, B.rawData(), C.rawData(), total);
+
+	return C;
+}
+
+__global__ void mulScalarKernel(const float* A, float* C, float x, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		C[idx] = A[idx] * x;
+	}
+}
+
+Tensor Tensor::operator*(float x) const
+{
+	Tensor C(shape);
+
+	int block = 256;
+	int grid = (total + block - 1) / block;
+
+	mulScalarKernel << <grid, block >> > (data, C.rawData(), x, total);
+
+	return C;
+}
+
+__global__ void divScalarKernel(const float* A, float* C, float x, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		C[idx] = A[idx] / x;
+	}
+}
+
+Tensor Tensor::operator/(float x) const
+{
+	if (x == 0)
+		throw runtime_error("ivision by zero not allowed!");
+
+	Tensor C(shape);
+
+	int block = 256;
+	int grid = (total + block - 1) / block;
+
+	divScalarKernel << <grid, block >> > (data, C.rawData(), x, total);
+
+	return C;
+}
+
+__global__ void addScalarKernel(const float* A, float* C, float x, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		C[idx] = A[idx] + x;
+	}
+}
+
+Tensor Tensor::operator+(float x) const
+{
+	Tensor C(shape);
+
+	int block = 256;
+	int grid = (total + block - 1) / block;
+
+	addScalarKernel << <grid, block >> > (data, C.rawData(), x, total);
+
+	return C;
+}
+
+__global__ void subScalarKernel(const float* A, float* C, float x, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		C[idx] = A[idx] - x;
+	}
+}
+
+Tensor Tensor::operator-(float x) const
+{
+	Tensor C(shape);
+
+	int block = 256;
+	int grid = (total + block - 1) / block;
+
+	subScalarKernel << <grid, block >> > (data, C.rawData(), x, total);
+
+	return C;
+}
+
+Tensor operator*(float x, const Tensor& A)
+{
+	return A * x;
+}
+
+Tensor operator+(float x, const Tensor& A)
+{
+	return A + x;
+}
+
+__global__ void scalarDivKernel(const float* A, float* C, float x, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		C[idx] = x / A[idx];
+	}
+}
+
+Tensor operator/(float x, const Tensor& A)
+{
+	Tensor C(A.getShape());
+
+	int block = 256;
+	int grid = (A.size() + block - 1) / block;
+
+	scalarDivKernel << <grid, block >> > (A.rawData(), C.rawData(), x, A.size());
+
+	return C;
+}
+
+__global__ void scalarSubKernel(const float* A, float* C, float x, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		C[idx] = x - A[idx];
+	}
+}
+
+Tensor operator-(float x, const Tensor& A)
+{
+	Tensor C(A.getShape());
+
+	int block = 256;
+	int grid = (A.size() + block - 1) / block;
+
+	scalarSubKernel << <grid, block >> > (A.rawData(), C.rawData(), x, A.size());
+
+	return C;
+}

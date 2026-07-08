@@ -62,4 +62,24 @@ public:
 	Tensor operator*(const Tensor& B) const;
 
 	Tensor operator/(const Tensor& B) const;
+
+	Tensor operator+(const Tensor& B) const;
+
+	Tensor operator-(const Tensor& B) const;
+
+	Tensor operator*(float x) const;
+
+	Tensor operator/(float x) const;
+
+	Tensor operator+(float x) const;
+
+	Tensor operator-(float x) const;
 };
+
+Tensor operator*(float x, const Tensor& A);
+
+Tensor operator+(float x, const Tensor& A);
+
+Tensor operator/(float x, const Tensor& A);
+
+Tensor operator-(float x, const Tensor& A);
