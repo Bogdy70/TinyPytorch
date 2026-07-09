@@ -559,6 +559,37 @@ int main()
 
         Tensor C7 = 8.0f - A;
         C7.toCPU().print();
+        
+        cout << "\n\nSqueeze test\n\n";
+
+        Tensor C8({ 1, 2, 3, 1 });
+        C8.squeeze();
+        C8.toCPU().print();
+        cout << "\n(";
+        for (int i = 0; i < C8.toCPU().dim(); i++)
+        {
+            if (i != C8.toCPU().dim() - 1)
+                cout << C8.toCPU().getShape()[i] << ", ";
+            else
+                cout << C8.toCPU().getShape()[i];
+        }
+        cout << ")";
+
+        cout << "\n\nUnsqueeze test\n\n";
+
+        Tensor C9({4});
+        C9 = { 1, 2, 3, 4 };
+        C9.unsqueeze(1);
+        C9.toCPU().print();
+        cout << "\n(";
+        for (int i = 0; i < C9.toCPU().dim(); i++)
+        {
+            if (i != C9.toCPU().dim() - 1)
+                cout << C9.toCPU().getShape()[i] << ", ";
+            else
+                cout << C9.toCPU().getShape()[i];
+        }
+        cout << ")";
 
 
         cout << "\n\nCUDA cat dataset test\n\n";
