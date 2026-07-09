@@ -59,6 +59,10 @@ public:
 
 	Tensor& resize(const vector<int>& shape);
 
+	Tensor& squeeze(int dim = -1);
+
+	Tensor& unsqueeze(int dim = 0);
+
 	Tensor operator*(const Tensor& B) const;
 
 	Tensor operator/(const Tensor& B) const;

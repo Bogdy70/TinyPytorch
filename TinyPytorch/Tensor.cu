@@ -194,6 +194,66 @@ Tensor& Tensor::resize(const vector<int>& shape)
 	return *this;
 }
 
+Tensor& Tensor::squeeze(int dim)
+{
+	vector<int> new_shape;
+
+	/*if (dim<-1 || dim>shape.size())
+		throw runtime_error("Dim value must be between -1 and tensor dimension - 1!");*/
+
+	if (dim != -1)
+	{
+		if (shape[dim] != 1)
+		{
+			return *this;
+		}
+		for (int i = 0; i < shape.size(); i++)
+		{
+			if (i != dim)
+				new_shape.push_back(shape[i]);
+		}
+	}
+	else
+	{
+		for (int d : shape)
+		{
+			if (d != 1)
+				new_shape.push_back(d);
+		}
+	}
+
+	shape = new_shape;
+	stride = calculateStride(new_shape);
+
+	return *this;
+}
+
+Tensor& Tensor::unsqueeze(int dim)
+{
+	if (dim<-1 || dim>shape.size())
+		throw runtime_error("Dim value must be between -1 and tensor dimension!");
+
+	vector<int> new_shape;
+
+	if (dim == -1 || dim==shape.size())
+	{
+		new_shape = shape;
+		new_shape.push_back(1);
+		shape = new_shape;
+		stride = calculateStride(new_shape);
+		return *this;
+	}
+	for (int i = 0; i < shape.size(); i++)
+	{
+		if (i == dim)
+			new_shape.push_back(1);
+		new_shape.push_back(shape[i]);
+	}
+	shape = new_shape;
+	stride = calculateStride(new_shape);
+	return *this;
+}
+
 __global__ void mulKernel(const float* A, const float* B, float* C, int size)
 {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
