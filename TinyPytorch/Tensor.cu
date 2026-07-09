@@ -568,6 +568,125 @@ Tensor Tensor::operator<(float x) const
 	return C;
 }
 
+__global__ void matmulKernel(float* C, const float* A, const float* B, int N, int M, int K)
+{
+	int i = blockIdx.y * blockDim.y + threadIdx.y;
+	int j = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (i<N && j<M)
+	{
+		float sum = 0.0f;
+
+		for (int k = 0; k < K; k++)
+		{
+			sum += A[i * K + k] * B[k * M + j];
+		}
+		C[i * M + j] = sum;
+	}
+}
+
+Tensor Tensor::matmul(const Tensor& B) const
+{
+	if (shape.size() > 2 || B.dim() > 2)
+		throw runtime_error("Tensor must be 2 dimensional!");
+
+	if (shape[1] != B.shape[0])
+		throw runtime_error("Inner dimesnions must be equal!");
+
+	Tensor C({ shape[0], B.shape[1] });
+
+	dim3 block(16, 16);
+	dim3 grid((B.shape[1] + block.x - 1) / block.x, (shape[0] + block.y - 1) / block.y);
+
+	matmulKernel << <grid, block >> > (C.data, data, B.data, shape[0], B.shape[1], shape[1]);
+
+	return C;
+}
+
+__global__ void TKernel(float* C, const float* A, int N, int M)
+{
+	int i = blockDim.y * blockIdx.y + threadIdx.y;
+	int j = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (i < N && j < M)
+	{
+		C[j * N + i] = A[i * M + j];
+	}
+}
+
+Tensor Tensor::T() const
+{
+	if (shape.size() > 2)
+		throw runtime_error("Tensor must be 2 dimensional!");
+
+	Tensor C({ shape[1], shape[0] });
+
+	dim3 block(16, 16);
+	dim3 grid((shape[1] + block.x - 1) / block.x, (shape[0] + block.y - 1) / block.y);
+
+	TKernel << <grid, block >> > (C.data, data, shape[0], shape[1]);
+
+	return C;
+}
+
+__global__ void brcstaddKernel(const float* A, const float* B, float* C, int N, int M)
+{
+	int i = blockIdx.y * blockDim.y + threadIdx.y;
+	int j = blockDim.x * blockIdx.x + threadIdx.x;
+
+	if (i < N && j < M)
+	{
+		C[i * M + j] = A[i * M + j] + B[i];
+	}
+}
+
+Tensor Tensor::broadcastAdd(const Tensor& B) const
+{
+	if (shape.size() > 2 || B.dim() > 2)
+		throw runtime_error("Tensors must be 2 dimensional!");
+
+	if (shape[0] != B.shape[0])
+		throw runtime_error("Dimensions are not identical!");
+
+	Tensor C(shape);
+
+	dim3 block(16, 16);
+	dim3 grid((shape[1] + block.x - 1) / block.x, (shape[0] + block.y - 1) / block.y);
+
+	brcstaddKernel << <grid, block >> > (data, B.data, C.data, shape[0], shape[1]);
+
+	return C;
+}
+
+__global__ void brdcstdivKernel(const float* A, const float* B, float* C, int N, int M)
+{
+	int i = blockIdx.y * blockDim.y + threadIdx.y;
+	int j = blockDim.x * blockIdx.x + threadIdx.x;
+
+	if (i < N && j < M)
+	{
+		C[i * M + j] = A[i * M + j] / B[j];
+	}
+}
+
+Tensor Tensor::broadcastDiv(const Tensor& B) const
+{
+	if (shape.size() > 2 || B.dim() > 2)
+		throw runtime_error("Tensors must be 2 dimensional!");
+
+	if (shape[1] != B.shape[1])
+		throw runtime_error("Dimensions do not match!");
+
+	Tensor C(shape);
+
+	dim3 block(16, 16);
+	dim3 grid((shape[1] + block.x - 1) / block.x, (shape[0] + block.y - 1) / block.y);
+
+	brdcstdivKernel << <grid, block >> > (data, B.data, C.data, shape[0], shape[1]);
+
+	return C;
+}
+
 __global__ void powKernel(const float* A, float* C, float p, int size)
 {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
