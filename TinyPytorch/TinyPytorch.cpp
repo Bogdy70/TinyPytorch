@@ -591,6 +591,45 @@ int main()
         }
         cout << ")";
 
+        cout << "\n\nPowM test\n\n";
+
+        Tensor C10 = Tensor::powM(A, 2.0f);
+        C10.toCPU().print();
+
+        cout << "\n\nSqrtM test\n\n";
+
+        Tensor C11 = Tensor::sqrtM(A);
+        C11.toCPU().print();
+
+        cout << "\n\nClipM test\n\n";
+
+        Tensor C12 = Tensor::clipM(A, 3.0f, 16.0f);
+        C12.toCPU().print();
+
+        cout << "\n\nToScalar test\n\n";
+
+        Tensor C13({ 1, 1 });
+        C13 = { 12 };
+        C13.toCPU().print();
+        cout << "\n" << C13.toScalar();
+
+        cout << "\n\nEquals test\n\n";
+
+        Tensor D({ 2, 3, 3 });
+        D = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 11, 12, 13, 27, 15, 52, 17, 18 };
+        Tensor C14 = A == D;
+        C14.toCPU().print();
+
+        cout << "\n\nGreater than test\n\n";
+
+        Tensor C15 = A > 7.0f;
+        C15.toCPU().print();
+
+        cout << "\n\nLess than test\n\n";
+
+        Tensor C16 = B < 7.0f;
+        C16.toCPU().print();
+
 
         cout << "\n\nCUDA cat dataset test\n\n";
 

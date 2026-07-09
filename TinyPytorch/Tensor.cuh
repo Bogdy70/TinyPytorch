@@ -78,6 +78,34 @@ public:
 	Tensor operator+(float x) const;
 
 	Tensor operator-(float x) const;
+
+	Tensor operator==(const Tensor& B) const;
+
+	Tensor operator>(float x) const;
+
+	Tensor operator<(float x) const;
+
+	static Tensor powM(const Tensor& A, float power);
+
+	static Tensor sqrtM(const Tensor& A);
+
+	static Tensor expM(const Tensor& A);
+
+	static Tensor logM(const Tensor& A);
+
+	static Tensor absM(const Tensor& A);
+
+	static Tensor clipM(const Tensor& A, float minVal, float maxVal);
+
+	static Tensor tanhM(const Tensor& A);
+
+	static Tensor relu(const Tensor& A);
+
+	static Tensor der_relu(const Tensor& A);
+
+	Tensor clone() const;
+
+	float toScalar() const;
 };
 
 Tensor operator*(float x, const Tensor& A);

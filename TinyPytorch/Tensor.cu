@@ -498,3 +498,304 @@ Tensor operator-(float x, const Tensor& A)
 
 	return C;
 }
+
+__global__ void equalKernel(const float* A, const float* B, float* C, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		C[idx] = (A[idx] == B[idx]);
+	}
+}
+
+Tensor Tensor::operator==(const Tensor& B) const
+{
+	if (shape != B.shape)
+		throw runtime_error("Shapes do not match!");
+
+	Tensor C(shape);
+
+	int block = 256;
+	int grid = (total + block - 1) / block;
+
+	equalKernel << <grid, block >> > (data, B.rawData(), C.rawData(), total);
+
+	return C;
+}
+
+__global__ void greaterthKernel(const float* A, float* C, float x, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		C[idx] = (A[idx] > x);
+	}
+}
+
+Tensor Tensor::operator>(float x) const
+{
+	Tensor C(shape);
+
+	int block = 256;
+	int grid = (total + block - 1) / block;
+
+	greaterthKernel << <grid, block >> > (data, C.rawData(), x, total);
+
+	return C;
+}
+
+__global__ void lessthKernel(const float* A, float* C, float x, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		C[idx] = (A[idx] < x);
+	}
+}
+
+Tensor Tensor::operator<(float x) const
+{
+	Tensor C(shape);
+
+	int block = 256;
+	int grid = (total + block - 1) / block;
+
+	lessthKernel << <grid, block >> > (data, C.rawData(), x, total);
+
+	return C;
+}
+
+__global__ void powKernel(const float* A, float* C, float p, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		C[idx] = powf(A[idx], p);
+	}
+}
+
+Tensor Tensor::powM(const Tensor& A, float power)
+{
+	Tensor C(A.shape);
+
+	int block = 256;
+	int grid = (A.size() + block - 1) / block;
+
+	powKernel << <grid, block >> > (A.data, C.data, power, A.total);
+
+	return C;
+}
+
+__global__ void sqrtKernel(const float* A, float* C, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		C[idx] = sqrt(A[idx]);
+	}
+}
+
+Tensor Tensor::sqrtM(const Tensor& A)
+{
+	Tensor C(A.shape);
+
+	int block = 256;
+	int grid = (A.size() + block - 1) / block;
+
+	sqrtKernel << <grid, block >> > (A.data, C.data, A.total);
+
+	return C;
+}
+
+__global__ void expKernel(const float* A, float* C, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		C[idx] = exp(A[idx]);
+	}
+}
+
+Tensor Tensor::expM(const Tensor& A)
+{
+	Tensor C(A.shape);
+
+	int block = 256;
+	int grid = (A.size() + block - 1) / block;
+
+	expKernel << <grid, block >> > (A.data, C.data, A.total);
+
+	return C;
+}
+
+__global__ void logKernel(const float* A, float* C, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		C[idx] = log(A[idx]);
+	}
+}
+
+Tensor Tensor::logM(const Tensor& A)
+{
+	Tensor C(A.shape);
+
+	int block = 256;
+	int grid = (A.size() + block - 1) / block;
+
+	logKernel << <grid, block >> > (A.data, C.data, A.total);
+
+	return C;
+}
+
+__global__ void absKernel(const float* A, float* C, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		C[idx] = abs(A[idx]);
+	}
+}
+
+Tensor Tensor::absM(const Tensor& A)
+{
+	Tensor C(A.shape);
+
+	int block = 256;
+	int grid = (A.size() + block - 1) / block;
+
+	absKernel << <grid, block >> > (A.data, C.data, A.total);
+
+	return C;
+}
+
+__global__ void clipKernel(const float* A, float* C, float minVal, float maxVal, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		if (A[idx] < maxVal)
+		{
+			if (A[idx] > minVal)
+			{
+				C[idx] = A[idx];
+			}
+			else
+				C[idx] = minVal;
+		}
+		else
+			C[idx] = maxVal;
+	}
+}
+
+Tensor Tensor::clipM(const Tensor& A, float minVal, float maxVal)
+{
+	if (minVal > maxVal)
+		throw runtime_error("Min value cannot be bigger than max value!");
+
+	Tensor C(A.shape);
+
+	int block = 256;
+	int grid = (A.size() + block - 1) / block;
+
+	clipKernel << <grid, block >> > (A.data, C.data, minVal, maxVal, A.total);
+
+	return C;
+}
+
+__global__ void tanhKernel(const float* A, float* C, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		C[idx] = tanh(A[idx]);
+	}
+}
+
+Tensor Tensor::tanhM(const Tensor& A)
+{
+	Tensor C(A.shape);
+
+	int block = 256;
+	int grid = (A.total + block - 1) / block;
+
+	tanhKernel << <grid, block >> > (A.data, C.data, A.total);
+
+	return C;
+}
+
+__global__ void reluKernel(const float* A, float* C, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		C[idx] = A[idx] > 0.0f ? A[idx] : 0.0f;
+	}
+}
+
+Tensor Tensor::relu(const Tensor& A)
+{
+	Tensor C(A.shape);
+
+	int block = 256;
+	int grid = (A.size() + block - 1) / block;
+
+	reluKernel << <grid, block >> > (A.data, C.data, A.total);
+
+	return C;
+}
+
+__global__ void der_reluKernel(const float* A, float* C, int size)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		C[idx] = A[idx] > 0.0f ? 1.0f : 0.0f;
+	}
+}
+
+Tensor Tensor::der_relu(const Tensor& A)
+{
+	Tensor C(A.shape);
+
+	int block = 256;
+	int grid = (A.size() + block - 1) / block;
+
+	der_reluKernel << <grid, block >> > (A.data, C.data, A.total);
+
+	return C;
+}
+
+Tensor Tensor::clone() const
+{
+	Tensor C(shape);
+
+	cudaMemcpy(C.data, data, total * sizeof(float), cudaMemcpyDeviceToDevice);
+
+	return C;
+}
+
+float Tensor::toScalar() const
+{
+	if (total != 1)
+		throw runtime_error("Tensor must contain a single element!");
+
+	float res = 0.0f;
+
+	cudaMemcpy(&res, data, total * sizeof(float), cudaMemcpyDeviceToHost);
+
+	return res;
+}
