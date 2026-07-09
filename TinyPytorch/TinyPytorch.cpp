@@ -579,7 +579,7 @@ int main()
 
         Tensor C9({4});
         C9 = { 1, 2, 3, 4 };
-        C9.unsqueeze(-1);
+        C9.unsqueeze(1);
         C9.toCPU().print();
         cout << "\n(";
         for (int i = 0; i < C9.toCPU().dim(); i++)
