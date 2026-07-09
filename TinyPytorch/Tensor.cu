@@ -230,12 +230,12 @@ Tensor& Tensor::squeeze(int dim)
 
 Tensor& Tensor::unsqueeze(int dim)
 {
-	if (dim<-1 || dim>static_cast<int>(shape.size())-1)
-		throw runtime_error("Dim value must be between -1 and tensor dimension - 1!");
+	if (dim<-1 || dim>static_cast<int>(shape.size()))
+		throw runtime_error("Dim value must be between -1 and tensor dimension!");
 
 	vector<int> new_shape;
 
-	if (dim == -1)
+	if (dim == -1 || dim==shape.size())
 	{
 		new_shape = shape;
 		new_shape.push_back(1);
