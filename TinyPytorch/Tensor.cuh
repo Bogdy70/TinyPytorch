@@ -85,6 +85,14 @@ public:
 
 	Tensor operator<(float x) const;
 
+	Tensor matmul(const Tensor& B) const;
+
+	Tensor T() const;
+
+	Tensor broadcastAdd(const Tensor& B) const;
+
+	Tensor broadcastDiv(const Tensor& B) const;
+
 	static Tensor powM(const Tensor& A, float power);
 
 	static Tensor sqrtM(const Tensor& A);

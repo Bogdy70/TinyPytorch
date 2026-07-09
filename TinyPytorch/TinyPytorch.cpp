@@ -630,6 +630,43 @@ int main()
         Tensor C16 = B < 7.0f;
         C16.toCPU().print();
 
+        cout << "\n\nMatmul test\n\n";
+
+        Tensor A1({ 2, 3 });
+        A1 = { 1, 2, 3, 4, 5, 6 };
+        cout << "\n";
+        A1.toCPU().print();
+
+        Tensor B1({ 3, 4 });
+        B1 = { 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18 };
+        cout << "\n";
+        B1.toCPU().print();
+
+        Tensor C17 = A1.matmul(B1);
+        cout << "\n";
+        C17.toCPU().print();
+
+        cout << "\n\nTranspose test\n\n";
+
+        Tensor C18 = A1.T();
+        C18.toCPU().print();
+
+        cout << "\n\nBroadcast addition test\n\n";
+
+        Tensor E({ 3, 1 });
+        E = { 1, 2, 3 };
+
+        Tensor C19 = B1.broadcastAdd(E);
+        C19.toCPU().print();
+
+        cout << "\n\nBroadcast division test\n\n";
+
+        Tensor F1({ 1, 4 });
+        F1 = { 1, 2, 3, 4 };
+
+        Tensor C20 = B1.broadcastDiv(F1);
+        C20.toCPU().print();
+
 
         cout << "\n\nCUDA cat dataset test\n\n";
 
