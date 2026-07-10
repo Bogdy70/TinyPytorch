@@ -667,6 +667,19 @@ int main()
         Tensor C20 = B1.broadcastDiv(F1);
         C20.toCPU().print();
 
+        cout << "\n\nSum test\n\n";
+
+        Tensor C21 = Tensor::sum(A1);
+        float x = C21.toScalar();
+        cout << x << "\n\n";
+
+        Tensor C22 = Tensor::sum(A1, 0);
+        C22.toCPU().print();
+        cout << "\n";
+
+        Tensor C23 = Tensor::sum(A1, 1);
+        C23.toCPU().print();
+
 
         cout << "\n\nCUDA cat dataset test\n\n";
 

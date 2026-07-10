@@ -687,6 +687,106 @@ Tensor Tensor::broadcastDiv(const Tensor& B) const
 	return C;
 }
 
+__global__ void sum0Kernel(float* C, const float* A, int N, int M)
+{
+	int j = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (j < M)
+	{
+		float sum = 0.0f;
+		for (int i = 0; i < N; i++)
+		{
+			sum += A[i * M + j];
+		}
+		C[j] = sum;
+	}
+}
+
+__global__ void sum1Kernel(float* C, const float* A, int N, int M)
+{
+	int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (i < N)
+	{
+		float sum = 0.0f;
+		for (int j = 0; j < M; j++)
+		{
+			sum += A[i * M + j];
+		}
+		C[i] = sum;
+	}
+}
+
+__global__ void sumallKernel(float* C, const float* A, int size)
+{
+	extern __shared__ float sh[];
+
+	int sh_idx = threadIdx.x;
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	float val = 0.0f;
+
+	if (idx < size)
+		val = A[idx];
+
+	sh[sh_idx] = val;
+	__syncthreads();
+
+	for (int stride = blockDim.x / 2; stride > 0; stride /= 2)
+	{
+		if (sh_idx < stride)
+			sh[sh_idx] += sh[sh_idx + stride];
+
+		__syncthreads();
+	}
+
+	if (sh_idx == 0)
+		atomicAdd(C, sh[0]);
+}
+
+Tensor Tensor::sum(const Tensor& A, int axis)
+{
+	if (A.dim() > 2)
+		throw runtime_error("Tensor must be 2 dimensional!");
+
+	int block = 256;
+
+	if (axis == 0)
+	{
+		Tensor C({ 1, A.shape[1] });
+
+		int grid = (A.shape[1] + block - 1) / block;
+
+		sum0Kernel << <grid, block >> > (C.data, A.data, A.shape[0], A.shape[1]);
+
+		return C;
+	}
+	else if (axis == 1)
+	{
+		Tensor C({ A.shape[0], 1 });
+
+		int grid = (A.shape[0] + block - 1) / block;
+
+		sum1Kernel << <grid, block >> > (C.data, A.data, A.shape[0], A.shape[1]);
+
+		return C;
+	}
+	else if (axis == -1)
+	{
+		Tensor C({ 1 });
+
+		int grid = (A.total + block - 1) / block;
+
+		cudaMemset(C.data, 0, sizeof(float));
+
+		sumallKernel << <grid, block, block * sizeof(float) >> > (C.data, A.data, A.total);
+
+		return C;
+	}
+	else
+		throw runtime_error("Invalid axis value. Please input -1, 0 or 1!");
+}
+
 __global__ void powKernel(const float* A, float* C, float p, int size)
 {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
