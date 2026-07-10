@@ -93,6 +93,8 @@ public:
 
 	Tensor broadcastDiv(const Tensor& B) const;
 
+	static Tensor sum(const Tensor& A, int axis = -1);
+
 	static Tensor powM(const Tensor& A, float power);
 
 	static Tensor sqrtM(const Tensor& A);
