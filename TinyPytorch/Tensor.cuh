@@ -97,19 +97,19 @@ public:
 
 	static Tensor argmax(const Tensor& A, int axis = 0);
 
-	static Tensor powM(const Tensor& A, float power);
+	static Tensor powT(const Tensor& A, float power);
 
-	static Tensor sqrtM(const Tensor& A);
+	static Tensor sqrtT(const Tensor& A);
 
-	static Tensor expM(const Tensor& A);
+	static Tensor expT(const Tensor& A);
 
-	static Tensor logM(const Tensor& A);
+	static Tensor logT(const Tensor& A);
 
-	static Tensor absM(const Tensor& A);
+	static Tensor absT(const Tensor& A);
 
-	static Tensor clipM(const Tensor& A, float minVal, float maxVal);
+	static Tensor clipT(const Tensor& A, float minVal, float maxVal);
 
-	static Tensor tanhM(const Tensor& A);
+	static Tensor tanhT(const Tensor& A);
 
 	static Tensor relu(const Tensor& A);
 
