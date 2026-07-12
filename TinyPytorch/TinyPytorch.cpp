@@ -680,6 +680,15 @@ int main()
         Tensor C23 = Tensor::sum(A1, 1);
         C23.toCPU().print();
 
+        cout << "\n\nArgmax test\n\n";
+
+        Tensor C24 = Tensor::argmax(B1);
+        C24.toCPU().print();
+        cout << "\n";
+
+        Tensor C25 = Tensor::argmax(B1, 1);
+        C25.toCPU().print();
+
 
         cout << "\n\nCUDA cat dataset test\n\n";
 
