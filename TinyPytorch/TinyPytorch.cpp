@@ -591,19 +591,19 @@ int main()
         }
         cout << ")";
 
-        cout << "\n\nPowM test\n\n";
+        cout << "\n\nPowT test\n\n";
 
-        Tensor C10 = Tensor::powM(A, 2.0f);
+        Tensor C10 = Tensor::powT(A, 2.0f);
         C10.toCPU().print();
 
-        cout << "\n\nSqrtM test\n\n";
+        cout << "\n\nSqrtT test\n\n";
 
-        Tensor C11 = Tensor::sqrtM(A);
+        Tensor C11 = Tensor::sqrtT(A);
         C11.toCPU().print();
 
-        cout << "\n\nClipM test\n\n";
+        cout << "\n\nClipT test\n\n";
 
-        Tensor C12 = Tensor::clipM(A, 3.0f, 16.0f);
+        Tensor C12 = Tensor::clipT(A, 3.0f, 16.0f);
         C12.toCPU().print();
 
         cout << "\n\nToScalar test\n\n";

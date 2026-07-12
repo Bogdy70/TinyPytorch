@@ -868,7 +868,7 @@ __global__ void powKernel(const float* A, float* C, float p, int size)
 	}
 }
 
-Tensor Tensor::powM(const Tensor& A, float power)
+Tensor Tensor::powT(const Tensor& A, float power)
 {
 	Tensor C(A.shape);
 
@@ -890,7 +890,7 @@ __global__ void sqrtKernel(const float* A, float* C, int size)
 	}
 }
 
-Tensor Tensor::sqrtM(const Tensor& A)
+Tensor Tensor::sqrtT(const Tensor& A)
 {
 	Tensor C(A.shape);
 
@@ -912,7 +912,7 @@ __global__ void expKernel(const float* A, float* C, int size)
 	}
 }
 
-Tensor Tensor::expM(const Tensor& A)
+Tensor Tensor::expT(const Tensor& A)
 {
 	Tensor C(A.shape);
 
@@ -934,7 +934,7 @@ __global__ void logKernel(const float* A, float* C, int size)
 	}
 }
 
-Tensor Tensor::logM(const Tensor& A)
+Tensor Tensor::logT(const Tensor& A)
 {
 	Tensor C(A.shape);
 
@@ -956,7 +956,7 @@ __global__ void absKernel(const float* A, float* C, int size)
 	}
 }
 
-Tensor Tensor::absM(const Tensor& A)
+Tensor Tensor::absT(const Tensor& A)
 {
 	Tensor C(A.shape);
 
@@ -988,7 +988,7 @@ __global__ void clipKernel(const float* A, float* C, float minVal, float maxVal,
 	}
 }
 
-Tensor Tensor::clipM(const Tensor& A, float minVal, float maxVal)
+Tensor Tensor::clipT(const Tensor& A, float minVal, float maxVal)
 {
 	if (minVal > maxVal)
 		throw runtime_error("Min value cannot be bigger than max value!");
@@ -1013,7 +1013,7 @@ __global__ void tanhKernel(const float* A, float* C, int size)
 	}
 }
 
-Tensor Tensor::tanhM(const Tensor& A)
+Tensor Tensor::tanhT(const Tensor& A)
 {
 	Tensor C(A.shape);
 
