@@ -95,6 +95,8 @@ public:
 
 	static Tensor sum(const Tensor& A, int axis = -1);
 
+	static Tensor argmax(const Tensor& A, int axis = 0);
+
 	static Tensor powM(const Tensor& A, float power);
 
 	static Tensor sqrtM(const Tensor& A);

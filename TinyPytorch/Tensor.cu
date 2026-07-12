@@ -787,6 +787,77 @@ Tensor Tensor::sum(const Tensor& A, int axis)
 		throw runtime_error("Invalid axis value. Please input -1, 0 or 1!");
 }
 
+__global__ void argmax0Kernel(float* C, const float* A, int N, int M)
+{
+	int j = blockDim.x * blockIdx.x + threadIdx.x;
+
+	if (j < M)
+	{
+		float max0 = A[j];
+		int idx = 0;
+		for (int i = 0; i < N; i++)
+		{
+			if (A[i * M + j] > max0)
+			{
+				max0 = A[i * M + j];
+				idx = i;
+			}
+		}
+		C[j] = idx;
+	}
+}
+
+__global__ void argmax1Kernel(float* C, const float* A, int N, int M)
+{
+	int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (i < N)
+	{
+		float max1 = A[i * M];
+		int idx = 0;
+		for (int j = 0; j < M; j++)
+		{
+			if (A[i * M + j] > max1)
+			{
+				max1 = A[i * M + j];
+				idx = j;
+			}
+		}
+		C[i] = idx;
+	}
+}
+
+Tensor Tensor::argmax(const Tensor& A, int axis)
+{
+	if (A.dim() > 2)
+		throw runtime_error("Tensor must be 2 dimensional!");
+
+	int block = 256;
+
+	if (axis == 0)
+	{
+		Tensor C({ 1, A.shape[1] });
+
+		int grid = (A.shape[1] + block - 1) / block;
+
+		argmax0Kernel << <grid, block >> > (C.data, A.data, A.shape[0], A.shape[1]);
+
+		return C;
+	}
+	else if (axis == 1)
+	{
+		Tensor C({ A.shape[0], 1 });
+
+		int grid = (A.shape[0] + block - 1) / block;
+
+		argmax1Kernel << <grid, block >> > (C.data, A.data, A.shape[0], A.shape[1]);
+
+		return C;
+	}
+	else
+		throw runtime_error("Inavlid shape. Please input 0 or 1!");
+}
+
 __global__ void powKernel(const float* A, float* C, float p, int size)
 {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
