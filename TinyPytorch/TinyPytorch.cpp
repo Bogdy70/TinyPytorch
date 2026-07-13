@@ -691,13 +691,15 @@ int main()
 
         cout << "\n\nMax test\n\n";
 
-        cout << Tensor::maxT(B1).toScalar() << "\n";
+        cout << Tensor::maxT(B1).toScalar() << "\n\n";
 
         Tensor C26 = Tensor::maxT(B1, 0);
         C26.toCPU().print();
+        cout << "\n";
 
         Tensor C27 = Tensor::maxT(B1, 1);
         C27.toCPU().print();
+        cout << "\n";
 
 
         cout << "\n\nCUDA cat dataset test\n\n";
