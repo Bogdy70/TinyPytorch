@@ -689,6 +689,16 @@ int main()
         Tensor C25 = Tensor::argmax(B1, 1);
         C25.toCPU().print();
 
+        cout << "\n\nMax test\n\n";
+
+        cout << Tensor::maxT(B1).toScalar() << "\n";
+
+        Tensor C26 = Tensor::maxT(B1, 0);
+        C26.toCPU().print();
+
+        Tensor C27 = Tensor::maxT(B1, 1);
+        C27.toCPU().print();
+
 
         cout << "\n\nCUDA cat dataset test\n\n";
 
