@@ -858,6 +858,119 @@ Tensor Tensor::argmax(const Tensor& A, int axis)
 		throw runtime_error("Inavlid shape. Please input 0 or 1!");
 }
 
+__global__ void max0Kernel(float* C, const float* A, int N, int M)
+{
+	int j = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (j < M)
+	{
+		float max0 = A[j];
+		for (int i = 0; i < N; i++)
+		{
+			if (A[i * M + j] > max0)
+				max0 = A[i * M + j];
+		}
+		C[j] = max0;
+	}
+}
+
+__global__ void max1Kernel(float* C, const float* A, int N, int M)
+{
+	int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (i < N)
+	{
+		float max1 = A[i * M];
+		for (int j = 0; j < M; j++)
+		{
+			if (A[i * M + j] > max1)
+				max1 = A[i * M + j];
+		}
+		C[i] = max1;
+	}
+}
+
+__global__ void maxallKernel(float* C, const float* A, int size)
+{
+	int sh_idx = threadIdx.x;
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	extern __shared__ float sh[];
+
+	float val = -FLT_MAX;
+
+	if (idx < size)
+		val = A[idx];
+
+	sh[sh_idx] = val;
+	__syncthreads();
+
+	for (int stride = blockDim.x / 2; stride > 0; stride /= 2)
+	{
+		if (sh_idx<stride && sh[sh_idx + stride]>sh[sh_idx])
+			sh[sh_idx] = sh[sh_idx + stride];
+
+		__syncthreads();
+	}
+
+	if (sh_idx == 0)
+		C[blockIdx.x] = sh[0];
+}
+
+Tensor Tensor::maxT(const Tensor& A, int axis)
+{
+	if (A.dim() > 2)
+		throw runtime_error("Tensor must be 2 dimensional!");
+
+	int block = 256;
+
+	if (axis == 0)
+	{
+		int grid = (A.shape[1] + block - 1) / block;
+
+		Tensor C({ 1, A.shape[1] });
+
+		max0Kernel << <grid, block >> > (C.data, A.data, A.shape[0], A.shape[1]);
+
+		return C;
+	}
+	else if (axis == 1)
+	{
+		int grid = (A.shape[0] + block - 1) / block;
+
+		Tensor C({ A.shape[0], 1 });
+
+		max1Kernel << <grid, block >> > (C.data, A.data, A.shape[0], A.shape[1]);
+
+		return C;
+	}
+	else if (axis == -1)
+	{
+		int grid = (A.total + block - 1) / block;
+
+		Tensor C({ grid });
+
+		maxallKernel << <grid, block, block * sizeof(float) >> > (C.data, A.data, A.total);
+
+		while (grid > 1)
+		{
+			int newGrid = (grid + block - 1) / block;
+
+			Tensor partial({ newGrid });
+
+			maxallKernel << <newGrid, block, block * sizeof(float) >> > (partial.data, C.data, C.total);
+
+			grid = newGrid;
+
+			C = move(partial);
+		}
+
+		return C;
+	}
+	else
+		throw runtime_error("Invalid axis value. Please input -1, 0 or 1!");
+}
+
 __global__ void powKernel(const float* A, float* C, float p, int size)
 {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
