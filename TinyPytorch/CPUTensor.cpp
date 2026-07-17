@@ -174,3 +174,53 @@ CPUTensor CPUTensor::randomUniform(const vector<int>& shape, float start, float 
 
 	return T;
 }
+
+void CPUTensor::recursMapping(vector<int>& I, const vector<int>& shape, const vector<int>& stride, int idx, int dim)
+{
+	int rank = shape.size();
+
+	if (dim == rank)
+	{
+		I.push_back(idx);
+		return;
+	}
+
+	for (int i = 0; i < shape[dim]; i++)
+	{
+		recursMapping(I, shape, stride, idx + i * stride[dim], dim + 1);
+	}
+}
+
+CPUTensor CPUTensor::theMax(const CPUTensor& A, int axis)
+{
+	vector<int> newShape = A.shape;
+	vector<int> newStride = A.stride;
+	vector<int> I;
+
+	newShape.erase(newShape.begin() + axis);
+	newStride.erase(newStride.begin() + axis);
+
+	CPUTensor C(newShape);
+
+	recursMapping(I, newShape, newStride, 0, 0);
+
+	//C = vector<float>(I.begin(), I.end());
+	
+	int stride = A.stride[axis];
+
+	for (int i = 0; i < C.total; i++)
+	{
+		float the_max = -FLT_MAX;
+		int partial_idx = I[i];
+
+		for (int k = 0; k < A.shape[axis]; k++)
+		{
+			if (A.rawData()[partial_idx + k * stride] > the_max)
+				the_max = A.rawData()[partial_idx + k * stride];
+		}
+
+		C.rawData()[i] = the_max;
+	}
+
+	return C;
+}

@@ -49,4 +49,8 @@ public:
 	static CPUTensor random(const vector<int>& shape);
 
 	static CPUTensor randomUniform(const vector<int>& shape, float start, float end);
+
+	static void recursMapping(vector<int>& I, const vector<int>& shape, const vector<int>& stride, int idx, int dim);
+
+	static CPUTensor theMax(const CPUTensor& A, int axis);
 };

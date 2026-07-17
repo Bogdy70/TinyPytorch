@@ -858,38 +858,6 @@ Tensor Tensor::argmax(const Tensor& A, int axis)
 		throw runtime_error("Inavlid shape. Please input 0 or 1!");
 }
 
-__global__ void max0Kernel(float* C, const float* A, int N, int M)
-{
-	int j = blockIdx.x * blockDim.x + threadIdx.x;
-
-	if (j < M)
-	{
-		float max0 = A[j];
-		for (int i = 0; i < N; i++)
-		{
-			if (A[i * M + j] > max0)
-				max0 = A[i * M + j];
-		}
-		C[j] = max0;
-	}
-}
-
-__global__ void max1Kernel(float* C, const float* A, int N, int M)
-{
-	int i = blockIdx.x * blockDim.x + threadIdx.x;
-
-	if (i < N)
-	{
-		float max1 = A[i * M];
-		for (int j = 0; j < M; j++)
-		{
-			if (A[i * M + j] > max1)
-				max1 = A[i * M + j];
-		}
-		C[i] = max1;
-	}
-}
-
 __global__ void maxallKernel(float* C, const float* A, int size)
 {
 	int sh_idx = threadIdx.x;
@@ -917,34 +885,58 @@ __global__ void maxallKernel(float* C, const float* A, int size)
 		C[blockIdx.x] = sh[0];
 }
 
+__global__ void theMaxKernel(float* C, const float* A, const int* I, int size, int dim_size, int stride)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		float the_max = -FLT_MAX;
+		int a_idx = I[idx];
+
+		for (int i = 0; i < dim_size; i++)
+		{
+			if (A[a_idx + i * stride] > the_max)
+				the_max = A[a_idx + i * stride];
+		}
+
+		C[idx] = the_max;
+	}
+}
+
 Tensor Tensor::maxT(const Tensor& A, int axis)
 {
-	if (A.dim() > 2)
-		throw runtime_error("Tensor must be 2 dimensional!");
+	if (axis<-1 || axis>A.dim()-1)
+		throw runtime_error("Axis value outside of tensor dimension! Please input -1 or a valid value!");
 
 	int block = 256;
 
-	if (axis == 0)
+	if (axis != -1)
 	{
-		int grid = (A.shape[1] + block - 1) / block;
+		vector<int> newShape = A.shape;
+		vector<int> newStride = A.stride;
+		vector<int> I;
 
-		Tensor C({ 1, A.shape[1] });
+		newShape.erase(newShape.begin() + axis);
+		newStride.erase(newStride.begin() + axis);
 
-		max0Kernel << <grid, block >> > (C.data, A.data, A.shape[0], A.shape[1]);
+		CPUTensor::recursMapping(I, newShape, newStride, 0, 0);
+
+		int* d_I = nullptr;
+
+		cudaMalloc(&d_I, static_cast<size_t>(I.size() * sizeof(int)));
+
+		cudaMemcpy(d_I, I.data(), I.size() * sizeof(int), cudaMemcpyHostToDevice);
+
+		Tensor C(newShape);
+
+		int grid = (C.total + block - 1) / block;
+
+		theMaxKernel << <grid, block >> > (C.data, A.data, d_I, C.total, A.shape[axis], A.stride[axis]);
 
 		return C;
 	}
-	else if (axis == 1)
-	{
-		int grid = (A.shape[0] + block - 1) / block;
-
-		Tensor C({ A.shape[0], 1 });
-
-		max1Kernel << <grid, block >> > (C.data, A.data, A.shape[0], A.shape[1]);
-
-		return C;
-	}
-	else if (axis == -1)
+	else
 	{
 		int grid = (A.total + block - 1) / block;
 
@@ -967,8 +959,6 @@ Tensor Tensor::maxT(const Tensor& A, int axis)
 
 		return C;
 	}
-	else
-		throw runtime_error("Invalid axis value. Please input -1, 0 or 1!");
 }
 
 __global__ void powKernel(const float* A, float* C, float p, int size)
