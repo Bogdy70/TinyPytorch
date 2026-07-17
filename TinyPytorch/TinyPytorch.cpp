@@ -701,6 +701,11 @@ int main()
         C27.toCPU().print();
         cout << "\n";
 
+        cout << "\n\nNew max test\n\n";
+
+        Tensor G = Tensor::maxT(T, 1);
+        G.toCPU().print();
+
 
         cout << "\n\nCUDA cat dataset test\n\n";
 
