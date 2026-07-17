@@ -934,6 +934,8 @@ Tensor Tensor::maxT(const Tensor& A, int axis)
 
 		theMaxKernel << <grid, block >> > (C.data, A.data, d_I, C.total, A.shape[axis], A.stride[axis]);
 
+		cudaFree(d_I);
+
 		return C;
 	}
 	else
