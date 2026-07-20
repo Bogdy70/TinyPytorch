@@ -687,33 +687,26 @@ Tensor Tensor::broadcastDiv(const Tensor& B) const
 	return C;
 }
 
-__global__ void sum0Kernel(float* C, const float* A, int N, int M)
+__global__ void theSumKernel(float* C, const float* A, int size, int subDims, int redDim)
 {
-	int j = blockIdx.x * blockDim.x + threadIdx.x;
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-	if (j < M)
+	if (idx < size)
 	{
 		float sum = 0.0f;
-		for (int i = 0; i < N; i++)
-		{
-			sum += A[i * M + j];
-		}
-		C[j] = sum;
-	}
-}
 
-__global__ void sum1Kernel(float* C, const float* A, int N, int M)
-{
-	int i = blockIdx.x * blockDim.x + threadIdx.x;
+		int upperIdx = idx / subDims;
 
-	if (i < N)
-	{
-		float sum = 0.0f;
-		for (int j = 0; j < M; j++)
+		int subIdx = idx % subDims;
+
+		int a_idx = upperIdx * subDims * redDim + subIdx;
+
+		for (int i = 0; i < redDim; i++)
 		{
-			sum += A[i * M + j];
+			sum += A[a_idx + i * subDims];
 		}
-		C[i] = sum;
+
+		C[idx] = sum;
 	}
 }
 
@@ -744,34 +737,45 @@ __global__ void sumallKernel(float* C, const float* A, int size)
 		atomicAdd(C, sh[0]);
 }
 
-Tensor Tensor::sum(const Tensor& A, int axis)
+Tensor Tensor::sum(const Tensor& A, int axis, bool keepdim)
 {
-	if (A.dim() > 2)
-		throw runtime_error("Tensor must be 2 dimensional!");
+	if (axis<-1 || axis>A.dim()-1)
+		throw runtime_error("Invalid axis value. Please input -1 or a valid value!");
 
 	int block = 256;
 
-	if (axis == 0)
+	if (axis != -1)
 	{
-		Tensor C({ 1, A.shape[1] });
+		vector<int> newShape = A.shape;
 
-		int grid = (A.shape[1] + block - 1) / block;
+		if (keepdim)
+			newShape[axis] = 1;
+		else
+		{
+			newShape.erase(newShape.begin() + axis);
 
-		sum0Kernel << <grid, block >> > (C.data, A.data, A.shape[0], A.shape[1]);
+			if (newShape.empty())
+				newShape.push_back(1);
+		}
+
+		Tensor C(newShape);
+
+		int subDims = A.stride[axis];
+
+		int redDim = A.shape[axis];
+
+		int grid = (C.total + block - 1) / block;
+
+		theSumKernel << <grid, block >> > (C.data, A.data, C.total, subDims, redDim);
+
+		cudaError_t error = cudaGetLastError();
+
+		if (error != cudaSuccess)
+			throw runtime_error(cudaGetErrorString(error));
 
 		return C;
 	}
-	else if (axis == 1)
-	{
-		Tensor C({ A.shape[0], 1 });
-
-		int grid = (A.shape[0] + block - 1) / block;
-
-		sum1Kernel << <grid, block >> > (C.data, A.data, A.shape[0], A.shape[1]);
-
-		return C;
-	}
-	else if (axis == -1)
+	else
 	{
 		Tensor C({ 1 });
 
@@ -781,81 +785,220 @@ Tensor Tensor::sum(const Tensor& A, int axis)
 
 		sumallKernel << <grid, block, block * sizeof(float) >> > (C.data, A.data, A.total);
 
+		cudaError_t error = cudaGetLastError();
+
+		if (error != cudaSuccess)
+			throw runtime_error(cudaGetErrorString(error));
+
 		return C;
 	}
+}
+
+__global__ void theArgmaxKernel(float* C, const float* A, int size, int subDims, int redDim)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		float the_max = -FLT_MAX;
+		int the_argmax = 0;
+
+		int upperIdx = idx / subDims;
+
+		int subIdx = idx % subDims;
+
+		int a_idx = upperIdx * subDims * redDim + subIdx;
+
+		for (int i = 0; i < redDim; i++)
+		{
+			if (A[a_idx + i * subDims] > the_max)
+			{
+				the_max = A[a_idx + i * subDims];
+				the_argmax = i;
+			}
+		}
+
+		C[idx] = the_argmax;
+	}
+}
+
+__global__ void argmaxAllStartKernel(MaxStats* C, const float* A, int size)
+{
+	extern __shared__ MaxStats shm[];
+
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	int sh_idx = threadIdx.x;
+
+	if (idx < size)
+	{
+		shm[sh_idx].value = A[idx];
+		shm[sh_idx].index = idx;
+	}
 	else
-		throw runtime_error("Invalid axis value. Please input -1, 0 or 1!");
-}
-
-__global__ void argmax0Kernel(float* C, const float* A, int N, int M)
-{
-	int j = blockDim.x * blockIdx.x + threadIdx.x;
-
-	if (j < M)
 	{
-		float max0 = A[j];
-		int idx = 0;
-		for (int i = 0; i < N; i++)
+		shm[sh_idx].value = -FLT_MAX;
+		shm[sh_idx].index = -1;
+	}
+	__syncthreads();
+
+	for (int stride = blockDim.x / 2; stride > 0; stride /= 2)
+	{
+		if (sh_idx<stride)
 		{
-			if (A[i * M + j] > max0)
+			if (shm[sh_idx + stride].value > shm[sh_idx].value || (shm[sh_idx + stride].value == shm[sh_idx].value && shm[sh_idx + stride].index >= 0 && shm[sh_idx + stride].index < shm[sh_idx].index))
 			{
-				max0 = A[i * M + j];
-				idx = i;
+				shm[sh_idx] = shm[sh_idx + stride];
 			}
 		}
-		C[j] = idx;
+
+		__syncthreads();
+	}
+
+	if (sh_idx == 0)
+	{
+		C[blockIdx.x] = shm[0];
 	}
 }
 
-__global__ void argmax1Kernel(float* C, const float* A, int N, int M)
+__global__ void argmaxAllNextKernel(MaxStats* C, const MaxStats* A, int size)
 {
-	int i = blockIdx.x * blockDim.x + threadIdx.x;
+	extern __shared__ MaxStats shm[];
 
-	if (i < N)
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	int sh_idx = threadIdx.x;
+
+	if (idx < size)
 	{
-		float max1 = A[i * M];
-		int idx = 0;
-		for (int j = 0; j < M; j++)
+		shm[sh_idx] = A[idx];
+	}
+	else
+	{
+		shm[sh_idx].value = -FLT_MAX;
+		shm[sh_idx].index = -1;
+	}
+
+	__syncthreads();
+
+	for (int stride = blockDim.x / 2; stride > 0; stride /= 2)
+	{
+		if (sh_idx < stride)
 		{
-			if (A[i * M + j] > max1)
+			if (shm[sh_idx + stride].value > shm[sh_idx].value || (shm[sh_idx + stride].value == shm[sh_idx].value && shm[sh_idx + stride].index >= 0 && shm[sh_idx+stride].index < shm[sh_idx].index))
 			{
-				max1 = A[i * M + j];
-				idx = j;
+				shm[sh_idx] = shm[sh_idx + stride];
 			}
 		}
-		C[i] = idx;
+
+		__syncthreads();
+	}
+
+	if (sh_idx == 0)
+	{
+		C[blockIdx.x] = shm[0];
 	}
 }
 
-Tensor Tensor::argmax(const Tensor& A, int axis)
+__global__ void resultConversionKernel(float* C, const MaxStats* A)
 {
-	if (A.dim() > 2)
-		throw runtime_error("Tensor must be 2 dimensional!");
+	if (blockIdx.x == 0 && threadIdx.x == 0)
+	{
+		C[0] = A[0].index;
+	}
+}
+
+Tensor Tensor::argmax(const Tensor& A, int axis, bool keepdim)
+{
+	if (axis<-1 || axis>A.dim()-1)
+		throw runtime_error("Invalid axis value. Please input -1 or a valid value!");
 
 	int block = 256;
 
-	if (axis == 0)
+	if (axis == -1)
 	{
-		Tensor C({ 1, A.shape[1] });
+		int grid = (A.total + block - 1) / block;
 
-		int grid = (A.shape[1] + block - 1) / block;
+		MaxStats* C;
 
-		argmax0Kernel << <grid, block >> > (C.data, A.data, A.shape[0], A.shape[1]);
+		cudaMalloc(&C, grid * sizeof(MaxStats));
 
-		return C;
+		argmaxAllStartKernel << <grid, block, block * sizeof(MaxStats) >> > (C, A.data, A.total);
+
+		cudaError_t error = cudaGetLastError();
+
+		if (error != cudaSuccess)
+			throw runtime_error(cudaGetErrorString(error));
+
+		while (grid > 1)
+		{
+			int newGrid = (grid + block - 1) / block;
+
+			MaxStats* partial;
+
+			cudaMalloc(&partial, newGrid * sizeof(MaxStats));
+
+			argmaxAllNextKernel << <newGrid, block, block * sizeof(MaxStats) >> > (partial, C, grid);
+
+			error = cudaGetLastError();
+
+			if (error != cudaSuccess)
+			{
+				cudaFree(partial);
+				cudaFree(C);
+				throw runtime_error(cudaGetErrorString(error));
+			}
+
+			grid = newGrid;
+
+			cudaFree(C);
+
+			C = partial;
+		}
+
+		Tensor res({ 1 });
+
+		resultConversionKernel << <1, 1 >> > (res.data, C);
+
+		error = cudaGetLastError();
+
+		if (error != cudaSuccess)
+		{
+			cudaFree(C);
+			throw runtime_error(cudaGetErrorString(error));
+		}
+
+		cudaFree(C);
+
+		return res;
 	}
-	else if (axis == 1)
-	{
-		Tensor C({ A.shape[0], 1 });
 
-		int grid = (A.shape[0] + block - 1) / block;
+	vector<int> newShape = A.shape;
 
-		argmax1Kernel << <grid, block >> > (C.data, A.data, A.shape[0], A.shape[1]);
-
-		return C;
-	}
+	if (keepdim)
+		newShape[axis] = 1;
 	else
-		throw runtime_error("Inavlid shape. Please input 0 or 1!");
+	{
+		newShape.erase(newShape.begin() + axis);
+
+		if (newShape.empty())
+			newShape.push_back(1);
+	}
+
+	Tensor C(newShape);
+
+	int subDims = A.stride[axis];
+
+	int redDim = A.shape[axis];
+
+	int grid = (C.total + block - 1) / block;
+
+	theArgmaxKernel << <grid, block >> > (C.data, A.data, C.total, subDims, redDim);
+
+	cudaError_t error = cudaGetLastError();
+
+	if (error != cudaSuccess)
+		throw runtime_error(cudaGetErrorString(error));
+
+	return C;
 }
 
 __global__ void maxallKernel(float* C, const float* A, int size)
@@ -917,7 +1060,7 @@ Tensor Tensor::maxT(const Tensor& A, int axis, bool keepdim)
 	{
 		vector<int> newShape = A.shape;
 
-		if (keepdim == true)
+		if (keepdim)
 			newShape[axis] = 1;
 		else
 		{
