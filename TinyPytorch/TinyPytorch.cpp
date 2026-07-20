@@ -442,7 +442,7 @@ int main()
         cout << "\n\nTensor test\n\n";
 
         Tensor T({ 2, 3, 4, 2 });
-        T = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48 };
+        T = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 127, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48 };
         CPUTensor CPUT = T.toCPU();
         CPUT.print();
 
@@ -705,6 +705,16 @@ int main()
 
         Tensor G = Tensor::maxT(T, 3, true);
         G.toCPU().print();
+
+        cout << "\n\nNew argmax test\n\n";
+
+        Tensor Arg = Tensor::argmax(T);
+        Arg.toCPU().print();
+
+        cout << "\n\nNew sum test\n\n";
+
+        Tensor Sum = Tensor::sum(T, 3, true);
+        Sum.toCPU().print();
 
 
         cout << "\n\nCUDA cat dataset test\n\n";

@@ -7,6 +7,12 @@ using namespace std;
 
 class CPUTensor;
 
+struct MaxStats
+{
+	float value;
+	int index;
+};
+
 class Tensor
 {
 private:
@@ -93,11 +99,11 @@ public:
 
 	Tensor broadcastDiv(const Tensor& B) const;
 
-	static Tensor sum(const Tensor& A, int axis = -1);
+	static Tensor sum(const Tensor& A, int axis = -1, bool keepdim = false);
 
 	static Tensor maxT(const Tensor& A, int axis = -1, bool keepdim = false);
 
-	static Tensor argmax(const Tensor& A, int axis = 0);
+	static Tensor argmax(const Tensor& A, int axis = -1, bool keepdim = false);
 
 	static Tensor powT(const Tensor& A, float power);
 
