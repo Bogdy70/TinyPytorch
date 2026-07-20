@@ -95,7 +95,7 @@ public:
 
 	static Tensor sum(const Tensor& A, int axis = -1);
 
-	static Tensor maxT(const Tensor& A, int axis = -1);
+	static Tensor maxT(const Tensor& A, int axis = -1, bool keepdim = false);
 
 	static Tensor argmax(const Tensor& A, int axis = 0);
 
