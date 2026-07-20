@@ -885,26 +885,28 @@ __global__ void maxallKernel(float* C, const float* A, int size)
 		C[blockIdx.x] = sh[0];
 }
 
-__global__ void theMaxKernel(float* C, const float* A, const int* I, int size, int dim_size, int stride)
+__global__ void theMaxKernel(float* C, const float* A, int size, int subDims, int redDim)
 {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
 	if (idx < size)
 	{
 		float the_max = -FLT_MAX;
-		int a_idx = I[idx];
+		int upperIdx = idx / subDims;
+		int subIdx = idx % subDims;
+		int a_idx = upperIdx * subDims * redDim + subIdx;
 
-		for (int i = 0; i < dim_size; i++)
+		for (int i = 0; i < redDim; i++)
 		{
-			if (A[a_idx + i * stride] > the_max)
-				the_max = A[a_idx + i * stride];
+			if (A[a_idx + i * subDims] > the_max)
+				the_max = A[a_idx + i * subDims];
 		}
 
 		C[idx] = the_max;
 	}
 }
 
-Tensor Tensor::maxT(const Tensor& A, int axis)
+Tensor Tensor::maxT(const Tensor& A, int axis, bool keepdim)
 {
 	if (axis<-1 || axis>A.dim()-1)
 		throw runtime_error("Axis value outside of tensor dimension! Please input -1 or a valid value!");
@@ -914,27 +916,31 @@ Tensor Tensor::maxT(const Tensor& A, int axis)
 	if (axis != -1)
 	{
 		vector<int> newShape = A.shape;
-		vector<int> newStride = A.stride;
-		vector<int> I;
 
-		newShape.erase(newShape.begin() + axis);
-		newStride.erase(newStride.begin() + axis);
+		if (keepdim == true)
+			newShape[axis] = 1;
+		else
+		{
+			newShape.erase(newShape.begin() + axis);
 
-		CPUTensor::recursMapping(I, newShape, newStride, 0, 0);
-
-		int* d_I = nullptr;
-
-		cudaMalloc(&d_I, static_cast<size_t>(I.size() * sizeof(int)));
-
-		cudaMemcpy(d_I, I.data(), I.size() * sizeof(int), cudaMemcpyHostToDevice);
+			if (newShape.empty())
+				newShape.push_back(1);
+		}
 
 		Tensor C(newShape);
 
+		int subDims = A.stride[axis];
+
+		int redDim = A.shape[axis];
+
 		int grid = (C.total + block - 1) / block;
 
-		theMaxKernel << <grid, block >> > (C.data, A.data, d_I, C.total, A.shape[axis], A.stride[axis]);
+		theMaxKernel << <grid, block >> > (C.data, A.data, C.total, subDims, redDim);
 
-		cudaFree(d_I);
+		cudaError_t error = cudaGetLastError();
+
+		if (error != cudaSuccess)
+			throw runtime_error(cudaGetErrorString(error));
 
 		return C;
 	}
@@ -946,6 +952,11 @@ Tensor Tensor::maxT(const Tensor& A, int axis)
 
 		maxallKernel << <grid, block, block * sizeof(float) >> > (C.data, A.data, A.total);
 
+		cudaError_t error = cudaGetLastError();
+
+		if (error != cudaSuccess)
+			throw runtime_error(cudaGetErrorString(error));
+
 		while (grid > 1)
 		{
 			int newGrid = (grid + block - 1) / block;
@@ -953,6 +964,11 @@ Tensor Tensor::maxT(const Tensor& A, int axis)
 			Tensor partial({ newGrid });
 
 			maxallKernel << <newGrid, block, block * sizeof(float) >> > (partial.data, C.data, C.total);
+
+			cudaError_t error = cudaGetLastError();
+
+			if (error != cudaSuccess)
+				throw runtime_error(cudaGetErrorString(error));
 
 			grid = newGrid;
 

@@ -703,7 +703,7 @@ int main()
 
         cout << "\n\nNew max test\n\n";
 
-        Tensor G = Tensor::maxT(T, 1);
+        Tensor G = Tensor::maxT(T, 3, true);
         G.toCPU().print();
 
 
