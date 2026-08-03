@@ -568,37 +568,61 @@ Tensor Tensor::operator<(float x) const
 	return C;
 }
 
-__global__ void matmulKernel(float* C, const float* A, const float* B, int N, int M, int K)
+__global__ void matmulKernel(float* C, const float* A, const float* B, int size, int M, int K, int N)
 {
-	int i = blockIdx.y * blockDim.y + threadIdx.y;
-	int j = blockIdx.x * blockDim.x + threadIdx.x;
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
 
-	if (i<N && j<M)
+	if (idx < size)
 	{
+		int upperIdxA = idx / N;
+		int upperIdxB = idx / (N * M);
+		int subIdxB = idx % N;
+
+		int idxA = upperIdxA * K;
+		int idxB = upperIdxB * K * N + subIdxB;
+
 		float sum = 0.0f;
 
-		for (int k = 0; k < K; k++)
+		for (int i = 0; i < K; i++)
 		{
-			sum += A[i * K + k] * B[k * M + j];
+			sum += A[idxA + i] * B[idxB + i * N];
 		}
-		C[i * M + j] = sum;
+
+		C[idx] = sum;
 	}
 }
 
 Tensor Tensor::matmul(const Tensor& B) const
 {
-	if (shape.size() > 2 || B.dim() > 2)
-		throw runtime_error("Tensor must be 2 dimensional!");
+	int K = shape[dim() - 1];
 
-	if (shape[1] != B.shape[0])
-		throw runtime_error("Inner dimesnions must be equal!");
+	if (K != B.shape[B.dim() - 2])
+		throw runtime_error("Invalid dimesnions for matrix multiplication!");
 
-	Tensor C({ shape[0], B.shape[1] });
+	vector<int> batchA = shape;
+	vector<int> batchB = B.shape;
 
-	dim3 block(16, 16);
-	dim3 grid((B.shape[1] + block.x - 1) / block.x, (shape[0] + block.y - 1) / block.y);
+	batchA.resize(dim() - 2);
+	batchB.resize(B.dim() - 2);
 
-	matmulKernel << <grid, block >> > (C.data, data, B.data, shape[0], B.shape[1], shape[1]);
+	if (batchA != batchB)
+		throw runtime_error("Batch size must be equal!");
+
+	int M = shape[dim() - 2];
+
+	int N = B.shape[B.dim() - 1];
+
+	vector<int> newShape = shape;
+
+	newShape.pop_back();
+	newShape.push_back(B.shape[B.dim() - 1]);
+
+	Tensor C(newShape);
+
+	int block = 256;
+	int grid = (C.total + block - 1) / block;
+
+	matmulKernel << <grid, block >> > (C.data, data, B.data, C.total, M, K, N);
 
 	return C;
 }

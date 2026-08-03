@@ -642,9 +642,9 @@ int main()
         cout << "\n";
         B1.toCPU().print();
 
-        Tensor C17 = A1.matmul(B1);
+        /*Tensor C17 = A1.matmul(B1);
         cout << "\n";
-        C17.toCPU().print();
+        C17.toCPU().print();*/
 
         cout << "\n\nTranspose test\n\n";
 
@@ -715,6 +715,22 @@ int main()
 
         Tensor Sum = Tensor::sum(T, 3, true);
         Sum.toCPU().print();
+
+        cout << "\n\nMatmul test\n\n";
+
+        Tensor T2({ 2, 3, 2, 5 });
+        T2 = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 127, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59 , 60 };
+
+        Tensor Matmul = T.matmul(T2);
+        Matmul.toCPU().print();
+        cout << "\n(";
+        for (int i = 0; i < Matmul.dim(); i++)
+        {
+            cout << Matmul.getShape()[i];
+            if (i != Matmul.dim() - 1)
+                cout << ", ";
+        }
+        cout << ")";
 
 
         cout << "\n\nCUDA cat dataset test\n\n";
