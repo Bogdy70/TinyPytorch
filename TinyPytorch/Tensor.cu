@@ -594,6 +594,9 @@ __global__ void matmulKernel(float* C, const float* A, const float* B, int size,
 
 Tensor Tensor::matmul(const Tensor& B) const
 {
+	if (dim() < 2)
+		throw runtime_error("Tensors must be at least 2 dimesnional!");
+
 	int K = shape[dim() - 1];
 
 	if (K != B.shape[B.dim() - 2])
@@ -627,28 +630,37 @@ Tensor Tensor::matmul(const Tensor& B) const
 	return C;
 }
 
-__global__ void TKernel(float* C, const float* A, int N, int M)
+__global__ void TKernel(float* C, const float* A, int size, int N, int M)
 {
-	int i = blockDim.y * blockIdx.y + threadIdx.y;
-	int j = blockIdx.x * blockDim.x + threadIdx.x;
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
 
-	if (i < N && j < M)
+	if (idx < size)
 	{
-		C[j * N + i] = A[i * M + j];
+		int idxC = idx % M * N + idx / M + idx / (N * M) * ((N * M) - N);
+		C[idxC] = A[idx];
 	}
 }
 
 Tensor Tensor::T() const
 {
-	if (shape.size() > 2)
-		throw runtime_error("Tensor must be 2 dimensional!");
+	if (dim() < 2)
+		throw runtime_error("Tensor must be at least 2 dimesnional!");
 
-	Tensor C({ shape[1], shape[0] });
+	vector<int> newShape = shape;
 
-	dim3 block(16, 16);
-	dim3 grid((shape[1] + block.x - 1) / block.x, (shape[0] + block.y - 1) / block.y);
+	newShape.resize(dim() - 2);
+	newShape.push_back(shape[dim() - 1]);
+	newShape.push_back(shape[dim() - 2]);
 
-	TKernel << <grid, block >> > (C.data, data, shape[0], shape[1]);
+	Tensor C(newShape);
+
+	int block = 256;
+	int grid = (total + block - 1) / block;
+
+	int N = shape[dim() - 2];
+	int M = shape[dim() - 1];
+
+	TKernel << <grid, block >> > (C.data, data, total, N, M);
 
 	return C;
 }

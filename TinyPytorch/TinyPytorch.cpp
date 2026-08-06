@@ -732,6 +732,19 @@ int main()
         }
         cout << ")";
 
+        cout << "\n\nT test\n\n";
+
+        Tensor Tr = T2.T();
+        Tr.toCPU().print();
+        cout << "\n(";
+        for (int i = 0; i < Tr.dim(); i++)
+        {
+            cout << Tr.getShape()[i];
+            if (i != Tr.dim() - 1)
+                cout << ", ";
+        }
+        cout << ")";
+
 
         cout << "\n\nCUDA cat dataset test\n\n";
 
