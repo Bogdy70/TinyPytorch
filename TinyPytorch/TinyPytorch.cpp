@@ -656,7 +656,7 @@ int main()
         Tensor E({ 3, 1 });
         E = { 1, 2, 3 };
 
-        Tensor C19 = B1.broadcastAdd(E);
+        Tensor C19 = B1 + E;
         C19.toCPU().print();
 
         cout << "\n\nBroadcast division test\n\n";
@@ -744,6 +744,47 @@ int main()
                 cout << ", ";
         }
         cout << ")";
+
+        cout << "\n\nBroadcasting test\n\n";
+
+        Tensor A2({ 3, 4, 2 });
+        Tensor B2({ 3, 1, 2 });
+        Tensor A3({ 2 });
+        Tensor B3({ 3, 4, 2 });
+        Tensor T3({ 2, 1, 4, 1, 2 });
+        Tensor T4({ 1, 3, 1, 5, 2 });
+
+        T3 = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
+        T4 = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30 };
+
+        Tensor T1({ 1, 2, 3, 1, 2 });
+        T1 = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 };
+
+        A2 = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24 };
+        B2 = { 1, 2, 3, 4, 5, 6 };
+        A3 = { 1, 2 };
+        B3 = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24 };
+
+        Tensor Br = T3 + T4;
+        Br.toCPU().print();
+        cout << "\n(";
+        for (int i = 0; i < Br.dim(); i++)
+        {
+            cout << Br.getShape()[i];
+            if (i != Br.dim() - 1)
+                cout << ", ";
+        }
+        cout << ")";
+
+        cout << "\n\nTest\n\n";
+
+        vector<int> v({ 4, 2 });
+        vector<int> newv;
+        newv.assign(2, 1);
+        newv.insert(newv.end(), v.begin(), v.end());
+
+        for (int i = 0; i < newv.size(); i++)
+            cout << newv[i] << " ";
 
 
         cout << "\n\nCUDA cat dataset test\n\n";

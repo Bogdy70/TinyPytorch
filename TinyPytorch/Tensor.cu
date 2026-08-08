@@ -304,29 +304,186 @@ Tensor Tensor::operator/(const Tensor& B) const
 	return C;
 }
 
-__global__ void addKernel(const float* A, const float* B, float* C, int size)
+__global__ void addKernel(float* C, const float* A, const float* B, int size, int subA, int subB, int upperA, int upperB, int strideA, int strideB)
 {
-	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
 
 	if (idx < size)
 	{
-		C[idx] = A[idx] + B[idx];
+		int idxA = subA == -1 ? idx : idx / strideA % upperA * subA + idx % subA;
+		int idxB = subB == -1 ? idx : idx / strideB % upperB * subB + idx % subB;
+
+		C[idx] = A[idxA] + B[idxB];
 	}
 }
 
 Tensor Tensor::operator+(const Tensor& B) const
 {
-	if (shape != B.shape)
-		throw runtime_error("Shapes do not match!");
-
-	Tensor C(shape);
+	vector<int> newShape = dim() >= B.dim() ? shape : B.shape;
+	int axisA = -1;
+	int axisB = -1;
+	int subDimsB, upperDimsB, upperStrideC_B;
+	int subDimsA, upperDimsA, upperStrideC_A;
 
 	int block = 256;
-	int grid = (total + block - 1) / block;
 
-	addKernel << <grid, block >> > (data, B.rawData(), C.rawData(), total);
+	if (dim() > B.dim())
+	{
+		vector<int> newB;
+		newB.assign(dim() - B.dim(), 1);
 
-	return C;
+		newB.insert(newB.end(), B.shape.begin(), B.shape.end());
+
+		for (int i = 0; i < dim(); i++)
+		{
+			if (newB[i] == 1)
+				axisB = i;
+
+			if (shape[i] == 1)
+				axisA = i;
+
+			if (shape[i] != 1)
+				newShape[i] = shape[i];
+			else if (newB[i] != 1)
+				newShape[i] = newB[i];
+			else
+				newShape[i] = 1;
+		}
+
+		Tensor C(newShape);
+
+		int grid = (C.total + block - 1) / block;
+
+		if (axisA == -1)
+		{
+			subDimsB = calculateStride(newB)[axisB];
+			upperDimsB = calculateTotal(newB) / subDimsB;
+			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+			addKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+		}
+		else
+		{
+			subDimsB = calculateStride(newB)[axisB];
+			upperDimsB = calculateTotal(newB) / subDimsB;
+			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+			subDimsA = stride[axisA];
+			upperDimsA = total / subDimsA;
+			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+			addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+		}
+
+		return C;
+	}
+	else if (B.dim() > dim())
+	{
+		vector<int> newA;
+		newA.assign(B.dim() - dim(), 1);
+
+		newA.insert(newA.end(), shape.begin(), shape.end());
+
+		for (int i = 0; i < B.dim(); i++)
+		{
+			if (newA[i] == 1)
+				axisA = i;
+
+			if (B.shape[i] == 1)
+				axisB = i;
+
+			if (newA[i] != 1)
+				newShape[i] = newA[i];
+			else if (B.shape[i] != 1)
+				newShape[i] = B.shape[i];
+			else
+				newShape[i] = 1;
+		}
+
+		Tensor C(newShape);
+
+		int grid = (C.total + block - 1) / block;
+
+		if (axisB == -1)
+		{
+			subDimsA = calculateStride(newA)[axisA];
+			upperDimsA = calculateTotal(newA) / subDimsA;
+			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+			addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+		}
+		else
+		{
+			subDimsB = B.stride[axisB];
+			upperDimsB = B.total / subDimsB;
+			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+			subDimsA = calculateStride(newA)[axisA];
+			upperDimsA = calculateTotal(newA) / subDimsA;
+			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+			addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+		}
+
+		return C;
+	}
+	else
+	{
+		for (int i = 0; i < dim(); i++)
+		{
+			if (shape[i] == 1)
+				axisA = i;
+
+			if (B.shape[i] == 1)
+				axisB = i;
+
+			if (shape[i] != 1)
+				newShape[i] = shape[i];
+			else if (B.shape[i] != 1)
+				newShape[i] = B.shape[i];
+			else
+				newShape[i] = 1;
+		}
+
+		Tensor C(newShape);
+
+		int grid = (C.total + block - 1) / block;
+
+		if (axisA == -1 && axisB == -1)
+		{
+			addKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+		}
+		else if (axisA == -1)
+		{
+			subDimsB = B.stride[axisB];
+			upperDimsB = B.total / subDimsB;
+			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+			addKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+		}
+		else if (axisB == -1)
+		{
+			subDimsA = stride[axisA];
+			upperDimsA = total / subDimsA;
+			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+			addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+		}
+		else
+		{
+			subDimsB = B.stride[axisB];
+			upperDimsB = B.total / subDimsB;
+			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+			subDimsA = stride[axisA];
+			upperDimsA = total / subDimsA;
+			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+			addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+		}
+
+		return C;
+	}
 }
 
 __global__ void subKernel(const float* A, const float* B, float* C, int size)
@@ -661,35 +818,6 @@ Tensor Tensor::T() const
 	int M = shape[dim() - 1];
 
 	TKernel << <grid, block >> > (C.data, data, total, N, M);
-
-	return C;
-}
-
-__global__ void brcstaddKernel(const float* A, const float* B, float* C, int N, int M)
-{
-	int i = blockIdx.y * blockDim.y + threadIdx.y;
-	int j = blockDim.x * blockIdx.x + threadIdx.x;
-
-	if (i < N && j < M)
-	{
-		C[i * M + j] = A[i * M + j] + B[i];
-	}
-}
-
-Tensor Tensor::broadcastAdd(const Tensor& B) const
-{
-	if (shape.size() > 2 || B.dim() > 2)
-		throw runtime_error("Tensors must be 2 dimensional!");
-
-	if (shape[0] != B.shape[0])
-		throw runtime_error("Dimensions are not identical!");
-
-	Tensor C(shape);
-
-	dim3 block(16, 16);
-	dim3 grid((shape[1] + block.x - 1) / block.x, (shape[0] + block.y - 1) / block.y);
-
-	brcstaddKernel << <grid, block >> > (data, B.data, C.data, shape[0], shape[1]);
 
 	return C;
 }

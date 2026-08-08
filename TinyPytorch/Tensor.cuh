@@ -95,8 +95,6 @@ public:
 
 	Tensor T() const;
 
-	Tensor broadcastAdd(const Tensor& B) const;
-
 	Tensor broadcastDiv(const Tensor& B) const;
 
 	static Tensor sum(const Tensor& A, int axis = -1, bool keepdim = false);
