@@ -2,6 +2,7 @@
 
 #include <vector>
 #include "Tensor.cuh"
+#include <string>
 
 using namespace std;
 
@@ -53,4 +54,6 @@ public:
 	static void recursMapping(vector<int>& I, const vector<int>& shape, const vector<int>& stride, int idx, int dim);
 
 	static CPUTensor theMax(const CPUTensor& A, int axis);
+
+	static CPUTensor loadMatrixBin(const std::string& filepath, int rows, int cols);
 };

@@ -2,6 +2,7 @@
 #include <stdexcept>
 #include <iostream>
 #include <random>
+#include <fstream>
 
 static random_device rd;
 static mt19937 gen(rd());
@@ -223,4 +224,28 @@ CPUTensor CPUTensor::theMax(const CPUTensor& A, int axis)
 	}
 
 	return C;
+}
+
+CPUTensor CPUTensor::loadMatrixBin(const string& filepath, int rows, int cols)
+{
+	CPUTensor mat({ rows, cols });
+
+	ifstream file(filepath, ios::binary);
+
+	if (!file)
+	{
+		throw runtime_error("File " + filepath + " could not be opened");
+	}
+
+	file.read(
+		reinterpret_cast<char*>(mat.data.data()),
+		rows * cols * sizeof(float)
+	);
+
+	if (!file)
+	{
+		throw runtime_error("Error while reading file" + filepath);
+	}
+
+	return mat;
 }

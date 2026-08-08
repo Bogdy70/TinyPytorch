@@ -9,60 +9,60 @@
 
 using namespace std;
 
-CMatrix sigmoid(const CMatrix& A)
+Tensor sigmoid(const Tensor& A)
 {
-    return 1.0f / (1.0f + CMatrix::expM(-1.0f * A));
+    return 1.0f / (1.0f + Tensor::expT(-1.0f * A));
 }
 
-CMatrix softmax(const CMatrix& A)
+Tensor softmax(const Tensor& A)
 {
-    CMatrix exp_A = CMatrix::expM(A);
-    CMatrix sum_exp = CMatrix::sum(exp_A, 0);
+    Tensor exp_A = Tensor::expT(A);
+    Tensor sum_exp = Tensor::sum(exp_A, 0);
 
-    return exp_A.broadcastDiv(sum_exp);
+    return exp_A / sum_exp;
 }
 
-CMatrix der_tanh(const CMatrix& A)
+Tensor der_tanh(const Tensor& A)
 {
-    return 1.0f - (CMatrix::tanhM(A) * CMatrix::tanhM(A));
+    return 1.0f - (Tensor::tanhT(A) * Tensor::tanhT(A));
 }
 
-CMatrix sign(const CMatrix& A)
+Tensor sign(const Tensor& A)
 {
     return (A > 0.0f) - (A < 0.0f);
 }
 
 struct Parameters
 {
-    vector<CMatrix> W;
-    vector<CMatrix> B;
+    vector<Tensor> W;
+    vector<Tensor> B;
 
     Parameters(int dim) : W(dim), B(dim) {}
 };
 
-float cost(const CMatrix& Y, const CMatrix& pred, const Parameters& params, const float lambda_l1=0.0f, const float lambda_l2=0.0f)
+float cost(const Tensor& Y, const Tensor& pred, const Parameters& params, const float lambda_l1=0.0f, const float lambda_l2=0.0f)
 {
-    float m = static_cast<float>(Y.getCols());
+    float m = static_cast<float>(Y.getShape()[Y.dim()-1]);
     int L = size(params.W);
     float epsilon = 1e-8f;
     float cost = 0.0f;
     float sumw = 0.0f;
-    CMatrix clippedPred = CMatrix::clipM(pred, epsilon, 1.0f - epsilon);
+    Tensor clippedPred = Tensor::clipT(pred, epsilon, 1.0f - epsilon);
 
     if (lambda_l1 < 0.0f || lambda_l2 < 0.0f)
         throw runtime_error("Lambda value cannot be less than zero.");
 
-    if (Y.getRows() > 1)
-        cost = (-1.0f / m) * CMatrix::sum(Y * CMatrix::logM(clippedPred)).toScalar();
+    if (Y.getShape()[Y.dim()-2] > 1)
+        cost = (-1.0f / m) * Tensor::sum(Y * Tensor::logT(clippedPred)).toScalar();
     else
-        cost = (-1.0f / m) * CMatrix::sum(Y * CMatrix::logM(clippedPred) + (1 - Y) * CMatrix::logM(1 - clippedPred)).toScalar();
+        cost = (-1.0f / m) * Tensor::sum(Y * Tensor::logT(clippedPred) + (1 - Y) * Tensor::logT(1 - clippedPred)).toScalar();
 
     if (lambda_l1 > 0.0f)
     {
         sumw = 0.0f;
         for (int l = 1; l < L; l++)
         {
-            sumw += CMatrix::sum(CMatrix::absM(params.W[l])).toScalar();
+            sumw += Tensor::sum(Tensor::absT(params.W[l])).toScalar();
         }
         cost += (lambda_l1 / m) * sumw;
     }
@@ -71,53 +71,53 @@ float cost(const CMatrix& Y, const CMatrix& pred, const Parameters& params, cons
         sumw = 0.0f;
         for (int l = 1; l < L; l++)
         {
-            sumw += CMatrix::sum(params.W[l] * params.W[l]).toScalar();
+            sumw += Tensor::sum(params.W[l] * params.W[l]).toScalar();
         }
         cost += (lambda_l2 / (2.0f * m)) * sumw;
     }
     return cost;
 }
 
-float accuracy(const CMatrix& Y, const CMatrix& pred)
+float accuracy(const Tensor& Y, const Tensor& pred)
 {
-    if (Y.getRows() > 1)
+    if (Y.getShape()[Y.dim()-2] > 1)
     {
-        CMatrix true_labels = CMatrix::argmax(Y);
-        CMatrix pred_labels = CMatrix::argmax(pred);
+        Tensor true_labels = Tensor::argmax(Y);
+        Tensor pred_labels = Tensor::argmax(pred);
 
-        return CMatrix::sum(true_labels == pred_labels).toScalar() / static_cast<float>(Y.getCols());
+        return Tensor::sum(true_labels == pred_labels).toScalar() / static_cast<float>(Y.getShape()[Y.dim() - 1]);
     }
     else
     {
-        CMatrix pred_labels = pred > 0.5f;
-        return CMatrix::sum(Y == pred_labels).toScalar() / static_cast<float>(Y.getCols());
+        Tensor pred_labels = pred > 0.5f;
+        return Tensor::sum(Y == pred_labels).toScalar() / static_cast<float>(Y.getShape()[Y.dim() - 1]);
     }
 }
 
 struct Forward
 {
-    vector<CMatrix> Z;
-    vector<CMatrix> A;
-    vector<CMatrix> D;
+    vector<Tensor> Z;
+    vector<Tensor> A;
+    vector<Tensor> D;
 
     Forward(int dim) : Z(dim), A(dim), D(dim){}
 };
 
 struct Backward
 {
-    vector<CMatrix> dZ;
-    vector<CMatrix> dW;
-    vector<CMatrix> dB;
+    vector<Tensor> dZ;
+    vector<Tensor> dW;
+    vector<Tensor> dB;
 
     Backward(int dim): dZ(dim), dW(dim), dB(dim) {}
 };
 
 struct AdamState
 {
-    vector<CMatrix> VdW;
-    vector<CMatrix> VdB;
-    vector<CMatrix> SdW;
-    vector<CMatrix> SdB;
+    vector<Tensor> VdW;
+    vector<Tensor> VdB;
+    vector<Tensor> SdW;
+    vector<Tensor> SdB;
     int t = 0;
 
     AdamState(const Parameters& params) : VdW(size(params.W)), VdB(size(params.B)), SdW(size(params.W)), SdB(size(params.B))
@@ -125,18 +125,18 @@ struct AdamState
         int L = size(params.W);
         for (int l = 1; l < L; l++)
         {
-            VdW[l] = CMatrix::zeros(params.W[l].getRows(), params.W[l].getCols());
-            VdB[l] = CMatrix::zeros(params.B[l].getRows(), params.B[l].getCols());
-            SdW[l] = CMatrix::zeros(params.W[l].getRows(), params.W[l].getCols());
-            SdB[l] = CMatrix::zeros(params.B[l].getRows(), params.B[l].getCols());
+            VdW[l] = Tensor::zeros({ params.W[l].getShape()[params.W[l].dim() - 2], params.W[l].getShape()[params.W[l].dim() - 1] });
+            VdB[l] = Tensor::zeros({ params.B[l].getShape()[params.B[l].dim() - 2], params.B[l].getShape()[params.B[l].dim() - 1] });
+            SdW[l] = Tensor::zeros({ params.W[l].getShape()[params.W[l].dim() - 2], params.W[l].getShape()[params.W[l].dim() - 1] });
+            SdB[l] = Tensor::zeros({ params.B[l].getShape()[params.B[l].dim() - 2], params.B[l].getShape()[params.B[l].dim() - 1] });
         }
     }
 };
 
 struct Activation
 {
-    CMatrix(*forward)(const CMatrix&);
-    CMatrix(*derivate)(const CMatrix&);
+    Tensor(*forward)(const Tensor&);
+    Tensor(*derivate)(const Tensor&);
 
     Activation(): forward(nullptr), derivate(nullptr) {}
 
@@ -144,12 +144,12 @@ struct Activation
     {
         if (name == "relu")
         {
-            forward = CMatrix::relu;
-            derivate = CMatrix::der_relu;
+            forward = Tensor::relu;
+            derivate = Tensor::der_relu;
         }
         else if (name == "tanh")
         {
-            forward = CMatrix::tanhM;
+            forward = Tensor::tanhT;
             derivate = der_tanh;
         }
         else
@@ -167,14 +167,14 @@ struct NetworkConfig
     NetworkConfig(const vector<int>& dim_list, const string& activ_name) : dims(dim_list), activation(activ_name) {}
 };
 
-void printMnistImage(const Matrix& img, int sample_idx)
+void printMnistImage(const CPUTensor& img, int sample_idx)
 {
     for (int i = 0; i < 784; i++)
     {
         if (i % 28 == 0)
             cout << "\n";
 
-        float value = img(i, sample_idx);
+        float value = img(i * img.getShape()[img.dim() - 1] + sample_idx);
 
         if (value > 0.7f)
             cout << "#";
@@ -192,14 +192,14 @@ Parameters init_params(const vector<int>& dim_list)
 
     for (int l = 1; l < L; l++)
     {
-        params.W[l] = CMatrix::random(dim_list[l], dim_list[l - 1]) * sqrt(2.0f / static_cast<float>(dim_list[l - 1]));
-        params.B[l] = CMatrix::zeros(dim_list[l], 1);
+        params.W[l] = Tensor::random({ dim_list[l], dim_list[l - 1] }) * sqrt(2.0f / static_cast<float>(dim_list[l - 1]));
+        params.B[l] = Tensor::zeros({ dim_list[l], 1 });
     }
 
     return params;
 }
 
-Forward forward_pass(const Parameters& params, const CMatrix& X, const string& activation, const float dropout=0.0f)
+Forward forward_pass(const Parameters& params, const Tensor& X, const string& activation, const float dropout=0.0f)
 {
     if (dropout < 0.0f || dropout >= 1.0f)
         throw runtime_error("Dropout value must be between [0, 1).");
@@ -207,37 +207,37 @@ Forward forward_pass(const Parameters& params, const CMatrix& X, const string& a
     int L = size(params.W);
     Forward forward_cache(L);
     Activation activ(activation);
-    CMatrix(*final_activ)(const CMatrix&);
+    Tensor(*final_activ)(const Tensor&);
 
     forward_cache.A[0] = X.clone();
 
     for (int l = 1; l < L-1; l++)
     {
-        forward_cache.Z[l] = params.W[l].matmul(forward_cache.A[l - 1]).broadcastAdd(params.B[l]);
+        forward_cache.Z[l] = params.W[l].matmul(forward_cache.A[l - 1]) + params.B[l];
         forward_cache.A[l] = activ.forward(forward_cache.Z[l]);
         if (dropout > 0.0f)
         {
-            forward_cache.D[l] = CMatrix::randomUniform(forward_cache.A[l].getRows(), forward_cache.A[l].getCols(), 0.0f, 1.0f) < (1.0f - dropout);
+            forward_cache.D[l] = Tensor::randomUniform({ forward_cache.A[l].getShape()[forward_cache.A[l].dim() - 2], forward_cache.A[l].getShape()[forward_cache.A[l].dim() - 1] }, 0.0f, 1.0f) < (1.0f - dropout);
             forward_cache.A[l] = forward_cache.A[l] * forward_cache.D[l] / (1.0f - dropout);
         }
     }
-    forward_cache.Z[L - 1] = params.W[L - 1].matmul(forward_cache.A[L - 2]).broadcastAdd(params.B[L - 1]);
-    final_activ = forward_cache.Z[L - 1].getRows() > 1 ? softmax : sigmoid;
+    forward_cache.Z[L - 1] = params.W[L - 1].matmul(forward_cache.A[L - 2]) + params.B[L - 1];
+    final_activ = forward_cache.Z[L - 1].getShape()[forward_cache.Z[L-1].dim()-2] > 1 ? softmax : sigmoid;
     forward_cache.A[L - 1] = final_activ(forward_cache.Z[L - 1]);
 
     return forward_cache;
 }
 
-Backward backpropagation(const Forward& frd_cache, const Parameters& params, const CMatrix& Y, const string& activation, const float dropout=0.0f, const float lambda_l1=0.0f, const float lambda_l2=0.0f)
+Backward backpropagation(const Forward& frd_cache, const Parameters& params, const Tensor& Y, const string& activation, const float dropout=0.0f, const float lambda_l1=0.0f, const float lambda_l2=0.0f)
 {
     int L = size(frd_cache.A);
-    float m = static_cast<float>(Y.getCols());
+    float m = static_cast<float>(Y.getShape()[Y.dim() - 1]);
     Backward grads(L);
     Activation activ(activation);
 
     grads.dZ[L - 1] = frd_cache.A[L - 1] - Y;
     grads.dW[L - 1] = (1.0f / m) * grads.dZ[L - 1].matmul(frd_cache.A[L - 2].T());
-    grads.dB[L - 1] = (1.0f / m) * CMatrix::sum(grads.dZ[L - 1], 1);
+    grads.dB[L - 1] = (1.0f / m) * Tensor::sum(grads.dZ[L - 1], 1);
     if (lambda_l1 > 0.0f)
         grads.dW[L - 1] = grads.dW[L - 1] + ((lambda_l1 / m) * sign(params.W[L - 1]));
     if (lambda_l2 > 0.0f)
@@ -254,7 +254,7 @@ Backward backpropagation(const Forward& frd_cache, const Parameters& params, con
             grads.dW[l] = grads.dW[l] + ((lambda_l1 / m) * sign(params.W[l]));
         if (lambda_l2 > 0.0f)
             grads.dW[l] = grads.dW[l] + ((lambda_l2 / m) * params.W[l]);
-        grads.dB[l] = (1.0f / m) * CMatrix::sum(grads.dZ[l], 1);
+        grads.dB[l] = (1.0f / m) * Tensor::sum(grads.dZ[l], 1);
     }
 
     return grads;
@@ -291,23 +291,23 @@ Parameters& adam(Parameters& params, const Backward& grads, AdamState& state, co
         state.SdW[l] = beta2 * state.SdW[l] + (1.0f - beta2) * (grads.dW[l] * grads.dW[l]);
         state.SdB[l] = beta2 * state.SdB[l] + (1.0f - beta2) * (grads.dB[l] * grads.dB[l]);
 
-        CMatrix VdW_corrected = state.VdW[l] / beta1_correction;
-        CMatrix VdB_corrected = state.VdB[l] / beta1_correction;
+        Tensor VdW_corrected = state.VdW[l] / beta1_correction;
+        Tensor VdB_corrected = state.VdB[l] / beta1_correction;
 
-        CMatrix SdW_corrected = state.SdW[l] / beta2_correction;
-        CMatrix SdB_corrected = state.SdB[l] / beta2_correction;
+        Tensor SdW_corrected = state.SdW[l] / beta2_correction;
+        Tensor SdB_corrected = state.SdB[l] / beta2_correction;
 
-        params.W[l] = params.W[l] - lr * VdW_corrected / (CMatrix::sqrtM(SdW_corrected) + epsilon);
-        params.B[l] = params.B[l] - lr * VdB_corrected / (CMatrix::sqrtM(SdB_corrected) + epsilon);
+        params.W[l] = params.W[l] - lr * VdW_corrected / (Tensor::sqrtT(SdW_corrected) + epsilon);
+        params.B[l] = params.B[l] - lr * VdB_corrected / (Tensor::sqrtT(SdB_corrected) + epsilon);
     }
 
     return params;
 }
 
-Parameters train(const CMatrix& X_train,
-    const CMatrix& X_test,
-    const CMatrix& y_train,
-    const CMatrix& y_test,
+Parameters train(const Tensor& X_train,
+    const Tensor& X_test,
+    const Tensor& y_train,
+    const Tensor& y_test,
     const vector<int>& dim_list,
     const string& activation,
     const float lr,
@@ -359,33 +359,33 @@ Parameters train(const CMatrix& X_train,
     return params;
 }
 
-void predict(const Matrix& X_test, const Matrix& y_test, const Parameters& params, const string& activation, int imgIdx)
+void predict(const CPUTensor& X_test, const CPUTensor& y_test, const Parameters& params, const string& activation, int imgIdx)
 {
-    Matrix one_mnist(X_test.getRows(), 1);
+    CPUTensor one_mnist({ X_test.getShape()[X_test.dim() - 2], 1 });
 
-    for (int i = 0; i < X_test.getRows(); i++)
+    for (int i = 0; i < X_test.getShape()[X_test.dim()-2]; i++)
     {
-        one_mnist(i, 0) = X_test(i, imgIdx);
+        one_mnist(i) = X_test(i * X_test.getShape()[X_test.dim() - 1] + imgIdx);
     }
 
-    Matrix one_mnisty(y_test.getRows(), 1);
+    CPUTensor one_mnisty({ y_test.getShape()[y_test.dim() - 2], 1 });
 
-    for (int i = 0; i < y_test.getRows(); i++)
+    for (int i = 0; i < y_test.getShape()[y_test.dim() - 2]; i++)
     {
-        one_mnisty(i, 0) = y_test(i, imgIdx);
+        one_mnisty(i) = y_test(i * y_test.getShape()[y_test.dim() - 1] + imgIdx);
     }
 
     int L = static_cast<int>(params.W.size());
 
     int pred_label = 0;
 
-    if (y_test.getRows() > 1)
+    if (y_test.getShape()[y_test.dim() - 2] > 1)
     {
         Forward frd_cache1 = forward_pass(params, one_mnist.toCUDA(), activation);
 
-        pred_label = CMatrix::argmax(frd_cache1.A[L - 1]).toScalar();
+        pred_label = Tensor::argmax(frd_cache1.A[L - 1]).toScalar();
 
-        int truth_label = Matrix::argmax(one_mnisty)(0, 0);
+        int truth_label = Tensor::argmax(one_mnisty.toCUDA()).toScalar();
 
         cout << "\nTruth: " << truth_label << " || Pred: " << pred_label;
 
@@ -395,9 +395,9 @@ void predict(const Matrix& X_test, const Matrix& y_test, const Parameters& param
     {
         Forward frd_cache1 = forward_pass(params, one_mnist.toCUDA(), activation);
 
-        pred_label = (frd_cache1.A[L - 1] > 0.5f).toCPU()(0, imgIdx);
+        pred_label = (frd_cache1.A[L - 1] > 0.5f).toCPU()(imgIdx);
 
-        cout << "\nTruth: " << y_test(0, imgIdx) << " || Pred: " << pred_label;
+        cout << "\nTruth: " << y_test(imgIdx) << " || Pred: " << pred_label;
     }
 }
 
@@ -405,36 +405,36 @@ int main()
 {
     try
     {
-        Matrix X_train_cat = Matrix::loadMatrixBin("data/cat/X_train.bin", 12288, 209);
-        Matrix y_train_cat = Matrix::loadMatrixBin("data/cat/Y_train.bin", 1, 209);
+        CPUTensor X_train_cat = CPUTensor::loadMatrixBin("data/cat/X_train.bin", 12288, 209);
+        CPUTensor y_train_cat = CPUTensor::loadMatrixBin("data/cat/Y_train.bin", 1, 209);
 
-        Matrix X_test_cat = Matrix::loadMatrixBin("data/cat/X_test.bin", 12288, 50);
-        Matrix y_test_cat = Matrix::loadMatrixBin("data/cat/Y_test.bin", 1, 50);
+        CPUTensor X_test_cat = CPUTensor::loadMatrixBin("data/cat/X_test.bin", 12288, 50);
+        CPUTensor y_test_cat = CPUTensor::loadMatrixBin("data/cat/Y_test.bin", 1, 50);
 
-        Matrix X_train_mnist = Matrix::loadMatrixBin("data/mnist/X_train.bin", 784, 5000);
-        Matrix y_train_mnist = Matrix::loadMatrixBin("data/mnist/Y_train.bin", 10, 5000);
+        CPUTensor X_train_mnist = CPUTensor::loadMatrixBin("data/mnist/X_train.bin", 784, 5000);
+        CPUTensor y_train_mnist = CPUTensor::loadMatrixBin("data/mnist/Y_train.bin", 10, 5000);
 
-        Matrix X_test_mnist = Matrix::loadMatrixBin("data/mnist/X_test.bin", 784, 1000);
-        Matrix y_test_mnist = Matrix::loadMatrixBin("data/mnist/Y_test.bin", 10, 1000);
+        CPUTensor X_test_mnist = CPUTensor::loadMatrixBin("data/mnist/X_test.bin", 784, 1000);
+        CPUTensor y_test_mnist = CPUTensor::loadMatrixBin("data/mnist/Y_test.bin", 10, 1000);
 
         cout << "Cat dataset loaded successfully\n";
 
-        cout << "X_train_cat: (" << X_train_cat.getRows() << ", " << X_train_cat.getCols() << ")\n";
-        cout << "y_train_cat: (" << y_train_cat.getRows() << ", " << y_train_cat.getCols() << ")\n";
+        cout << "X_train_cat: (" << X_train_cat.getShape()[X_train_cat.dim() - 2] << ", " << X_train_cat.getShape()[X_train_cat.dim() - 1] << ")\n";
+        cout << "y_train_cat: (" << y_train_cat.getShape()[y_train_cat.dim() - 2] << ", " << y_train_cat.getShape()[y_train_cat.dim() - 1] << ")\n";
         
-        cout << "X_test_cat: (" << X_test_cat.getRows() << ", " << X_test_cat.getCols() << ")\n";
-        cout << "y_test_cat: (" << y_test_cat.getRows() << ", " << y_test_cat.getCols() << ")\n";
+        cout << "X_test_cat: (" << X_test_cat.getShape()[X_test_cat.dim() - 2] << ", " << X_test_cat.getShape()[X_test_cat.dim() - 1] << ")\n";
+        cout << "y_test_cat: (" << y_test_cat.getShape()[y_test_cat.dim() - 2] << ", " << y_test_cat.getShape()[y_test_cat.dim() - 1] << ")\n";
 
         cout << "\nMnist dataset loaded successfully\n";
 
-        cout << "X_train_mnist: (" << X_train_mnist.getRows() << ", " << X_train_mnist.getCols() << ")\n";
-        cout << "y_train_mnist: (" << y_train_mnist.getRows() << ", " << y_train_mnist.getCols() << ")\n";
+        cout << "X_train_mnist: (" << X_train_mnist.getShape()[X_train_mnist.dim() - 2] << ", " << X_train_mnist.getShape()[X_train_mnist.dim() - 1] << ")\n";
+        cout << "y_train_mnist: (" << y_train_mnist.getShape()[y_train_mnist.dim() - 2] << ", " << y_train_mnist.getShape()[y_train_mnist.dim() - 1] << ")\n";
 
-        cout << "X_test_mnist: (" << X_test_mnist.getRows() << ", " << X_test_mnist.getCols() << ")\n";
-        cout << "y_test_mnist: (" << y_test_mnist.getRows() << ", " << y_test_mnist.getCols() << ")\n\n";
+        cout << "X_test_mnist: (" << X_test_mnist.getShape()[X_test_mnist.dim() - 2] << ", " << X_test_mnist.getShape()[X_test_mnist.dim() - 1] << ")\n";
+        cout << "y_test_mnist: (" << y_test_mnist.getShape()[y_test_mnist.dim() - 2] << ", " << y_test_mnist.getShape()[y_test_mnist.dim() - 1] << ")\n\n";
 
 
-        vector<int> dim_list = { X_train_cat.getRows(), 100, 100, 200, y_train_cat.getRows() };
+        vector<int> dim_list = { X_train_cat.getShape()[X_train_cat.dim() - 2], 100, 100, 200, y_train_cat.getShape()[y_train_cat.dim() - 2] };
         auto start = std::chrono::high_resolution_clock::now();
         auto end = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> elapsed;
@@ -445,20 +445,6 @@ int main()
         T = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 127, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48 };
         CPUTensor CPUT = T.toCPU();
         CPUT.print();
-
-        cout << "\n\nMatrix test\n\n";
-
-        CMatrix M(4, 2);
-        M = { 1, 2, 3, 4, 5, 6, 7, 8 };
-        Matrix CPUM = M.toCPU();
-        for (int i = 0; i < CPUM.getRows(); i++)
-        {
-            for (int j = 0; j < CPUM.getCols(); j++)
-            {
-                cout << CPUM(i, j) << " ";
-            }
-            cout << "\n";
-        }
 
         cout << "\n\nZeros test\n\n";
 
@@ -790,7 +776,7 @@ int main()
 
         start = std::chrono::high_resolution_clock::now();
 
-        Matrix::setSeed(42);
+        CPUTensor::setSeed(42);
 
         Parameters params3 = train(X_train_cat.toCUDA(), X_test_cat.toCUDA(), y_train_cat.toCUDA(), y_test_cat.toCUDA(), dim_list, "tanh", 0.0001f, 700, 100, 0.9f, 0.999f, 1e-8f, 0.2f, 0.0f, 0.01f);
 
@@ -805,14 +791,14 @@ int main()
         predict(X_test_cat, y_test_cat, params3, "tanh", 7);
 
 
-        dim_list = { X_train_mnist.getRows(), 100, 100, 200, y_train_mnist.getRows() };
+        dim_list = { X_train_mnist.getShape()[X_train_cat.dim() - 2], 100, 100, 200, y_train_mnist.getShape()[y_train_mnist.dim() - 2] };
 
 
         cout << "\n\nCUDA mnist dataset test\n\n";
 
         start = std::chrono::high_resolution_clock::now();
 
-        Matrix::setSeed(123);
+        CPUTensor::setSeed(123);
 
         Parameters params6 = train(X_train_mnist.toCUDA(), X_test_mnist.toCUDA(), y_train_mnist.toCUDA(), y_test_mnist.toCUDA(), dim_list, "relu", 0.0001f, 1000, 100, 0.9f, 0.999f, 1e-8f, 0.0f, 0.0f, 0.01f);
 
