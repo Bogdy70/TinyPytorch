@@ -642,10 +642,6 @@ int main()
         cout << "\n";
         B1.toCPU().print();
 
-        /*Tensor C17 = A1.matmul(B1);
-        cout << "\n";
-        C17.toCPU().print();*/
-
         cout << "\n\nTranspose test\n\n";
 
         Tensor C18 = A1.T();
@@ -664,7 +660,7 @@ int main()
         Tensor F1({ 1, 4 });
         F1 = { 1, 2, 3, 4 };
 
-        Tensor C20 = B1.broadcastDiv(F1);
+        Tensor C20 = B1 / F1;
         C20.toCPU().print();
 
         cout << "\n\nSum test\n\n";
@@ -753,6 +749,9 @@ int main()
         Tensor B3({ 3, 4, 2 });
         Tensor T3({ 2, 1, 4, 1, 2 });
         Tensor T4({ 1, 3, 1, 5, 2 });
+        Tensor T5({ 1 });
+
+        T5 = { 10 };
 
         T3 = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
         T4 = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30 };
@@ -765,7 +764,7 @@ int main()
         A3 = { 1, 2 };
         B3 = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24 };
 
-        Tensor Br = T3 + T4;
+        Tensor Br = B2 + T5;
         Br.toCPU().print();
         cout << "\n(";
         for (int i = 0; i < Br.dim(); i++)
