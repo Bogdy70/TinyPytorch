@@ -4,7 +4,6 @@
 #include <string>
 #include <chrono>
 #include <stdexcept>
-#include "Matrix.h"
 #include "CPUTensor.h"
 
 using namespace std;
@@ -82,8 +81,8 @@ float accuracy(const Tensor& Y, const Tensor& pred)
 {
     if (Y.getShape()[Y.dim()-2] > 1)
     {
-        Tensor true_labels = Tensor::argmax(Y);
-        Tensor pred_labels = Tensor::argmax(pred);
+        Tensor true_labels = Tensor::argmax(Y, 0);
+        Tensor pred_labels = Tensor::argmax(pred, 0);
 
         return Tensor::sum(true_labels == pred_labels).toScalar() / static_cast<float>(Y.getShape()[Y.dim() - 1]);
     }
@@ -237,7 +236,7 @@ Backward backpropagation(const Forward& frd_cache, const Parameters& params, con
 
     grads.dZ[L - 1] = frd_cache.A[L - 1] - Y;
     grads.dW[L - 1] = (1.0f / m) * grads.dZ[L - 1].matmul(frd_cache.A[L - 2].T());
-    grads.dB[L - 1] = (1.0f / m) * Tensor::sum(grads.dZ[L - 1], 1);
+    grads.dB[L - 1] = (1.0f / m) * Tensor::sum(grads.dZ[L - 1], 1, true);
     if (lambda_l1 > 0.0f)
         grads.dW[L - 1] = grads.dW[L - 1] + ((lambda_l1 / m) * sign(params.W[L - 1]));
     if (lambda_l2 > 0.0f)
@@ -254,7 +253,7 @@ Backward backpropagation(const Forward& frd_cache, const Parameters& params, con
             grads.dW[l] = grads.dW[l] + ((lambda_l1 / m) * sign(params.W[l]));
         if (lambda_l2 > 0.0f)
             grads.dW[l] = grads.dW[l] + ((lambda_l2 / m) * params.W[l]);
-        grads.dB[l] = (1.0f / m) * Tensor::sum(grads.dZ[l], 1);
+        grads.dB[l] = (1.0f / m) * Tensor::sum(grads.dZ[l], 1, true);
     }
 
     return grads;

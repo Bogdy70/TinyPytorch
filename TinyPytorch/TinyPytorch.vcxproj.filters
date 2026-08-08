@@ -1,9 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <ClCompile Include="Matrix.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="TinyPytorch.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -12,12 +9,6 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="CMatrix.cuh">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="Matrix.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="Tensor.cuh">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -77,9 +68,6 @@
     </None>
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="CMatrix.cu">
-      <Filter>Source Files</Filter>
-    </CudaCompile>
     <CudaCompile Include="Tensor.cu">
       <Filter>Source Files</Filter>
     </CudaCompile>

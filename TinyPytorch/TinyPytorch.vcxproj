@@ -149,7 +149,6 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="CPUTensor.cpp" />
-    <ClCompile Include="Matrix.cpp" />
     <ClCompile Include="TinyPytorch.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -157,13 +156,10 @@
     <Text Include="data\mnist\shapes.txt" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="CMatrix.cuh" />
     <ClInclude Include="CPUTensor.h" />
-    <ClInclude Include="Matrix.h" />
     <ClInclude Include="Tensor.cuh" />
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="CMatrix.cu" />
     <CudaCompile Include="Tensor.cu" />
   </ItemGroup>
   <ItemGroup>
