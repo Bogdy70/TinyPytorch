@@ -13,6 +13,16 @@ struct MaxStats
 	int index;
 };
 
+constexpr int MAX_TENSOR_LENGTH = 8;
+
+struct BroadcastStats
+{
+	int out_shape[MAX_TENSOR_LENGTH]{};
+	int out_stride[MAX_TENSOR_LENGTH]{};
+	int strideA[MAX_TENSOR_LENGTH]{};
+	int strideB[MAX_TENSOR_LENGTH]{};
+};
+
 class Tensor
 {
 private:
@@ -74,6 +84,8 @@ public:
 	Tensor operator/(const Tensor& B) const;
 
 	Tensor operator+(const Tensor& B) const;
+
+	Tensor add(const Tensor& B) const;
 
 	Tensor operator-(const Tensor& B) const;
 

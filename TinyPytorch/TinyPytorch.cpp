@@ -749,7 +749,7 @@ int main()
         A3 = { 1, 2 };
         B3 = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24 };
 
-        Tensor Br = B2 + T5;
+        Tensor Br = T3.add(T4);
         Br.toCPU().print();
         cout << "\n(";
         for (int i = 0; i < Br.dim(); i++)

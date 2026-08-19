@@ -631,6 +631,170 @@ __global__ void addKernel(float* C, const float* A, const float* B, int size, in
 	}
 }
 
+__global__ void universalAddKernel(float* C, const float* A, const float* B, int size, int dim, BroadcastStats stats)
+{
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		int idxA = 0;
+		int idxB = 0;
+
+		for (int i = 0; i < dim; i++)
+		{
+			int coord = idx / stats.out_stride[i] % stats.out_shape[i];
+
+			idxA += coord * stats.strideA[i];
+
+			idxB += coord * stats.strideB[i];
+		}
+
+		C[idx] = A[idxA] + B[idxB];
+	}
+}
+
+Tensor Tensor::add(const Tensor& B) const
+{
+	vector<int> newShape = dim() >= B.dim() ? shape : B.shape;
+
+	if (newShape.size() > MAX_TENSOR_LENGTH)
+		throw runtime_error("Tensor length exceeded!");
+
+	int block = 256;
+
+	BroadcastStats stats;
+
+	if (dim() > B.dim())
+	{
+		vector<int> newB;
+		vector<int> newStride;
+
+		newB.assign(dim() - B.dim(), 1);
+		newStride.assign(dim() - B.dim(), 1);
+
+		newB.insert(newB.end(), B.shape.begin(), B.shape.end());
+		newStride.insert(newStride.end(), B.stride.begin(), B.stride.end());
+
+		for (int i = 0; i < dim(); i++)
+		{
+			if (shape[i] != newB[i] && shape[i] != 1 && newB[i] != 1)
+				throw runtime_error("Invalid Tensor shape!");
+
+			if (shape[i] != 1)
+			{
+				newShape[i] = shape[i];
+			}
+			else if (newB[i] != 1)
+			{
+				newShape[i] = newB[i];
+			}
+			else
+			{
+				newShape[i] = 1;
+			}
+		}
+
+		Tensor C(newShape);
+
+		for (int i = 0; i < C.dim(); i++)
+		{
+			stats.strideA[i] = shape[i] != 1 ? stride[i] : 0;
+			stats.strideB[i] = newB[i] != 1 ? newStride[i] : 0;
+			stats.out_shape[i] = C.shape[i];
+			stats.out_stride[i] = C.stride[i];
+		}
+
+		int grid = (C.total + block - 1) / block;
+
+		universalAddKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
+
+		return C;
+	}
+	else if (B.dim() > dim())
+	{
+		vector<int> newA;
+		vector<int> newStride;
+
+		newA.assign(B.dim() - dim(), 1);
+		newStride.assign(B.dim() - dim(), 1);
+
+		newA.insert(newA.end(), shape.begin(), shape.end());
+		newStride.insert(newStride.end(), stride.begin(), stride.end());
+
+		for (int i = 0; i < B.dim(); i++)
+		{
+			if (newA[i] != B.shape[i] && newA[i] != 1 && B.shape[i] != 1)
+				throw runtime_error("Invalid Tensor shape!");
+
+			if (newA[i] != 1)
+			{
+				newShape[i] = newA[i];
+			}
+			else if (B.shape[i] != 1)
+			{
+				newShape[i] = B.shape[i];
+			}
+			else
+			{
+				newShape[i] = 1;
+			}
+		}
+
+		Tensor C(newShape);
+
+		for (int i = 0; i < C.dim(); i++)
+		{
+			stats.strideA[i] = newA[i] != 1 ? newStride[i] : 0;
+			stats.strideB[i] = B.shape[i] != 1 ? B.stride[i] : 0;
+			stats.out_shape[i] = C.shape[i];
+			stats.out_stride[i] = C.stride[i];
+		}
+
+		int grid = (C.total + block - 1) / block;
+
+		universalAddKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
+
+		return C;
+	}
+	else
+	{
+		for (int i = 0; i < dim(); i++)
+		{
+			if (shape[i] != B.shape[i] && shape[i] != 1 && B.shape[i] != 1)
+				throw runtime_error("Innvalid Tensor shape!");
+
+			if (shape[i] != 1)
+			{
+				newShape[i] = shape[i];
+			}
+			else if (B.shape[i] != 1)
+			{
+				newShape[i] = B.shape[i];
+			}
+			else
+			{
+				newShape[i] = 1;
+			}
+		}
+
+		Tensor C(newShape);
+
+		for (int i = 0; i < C.dim(); i++)
+		{
+			stats.strideA[i] = shape[i] != 1 ? stride[i] : 0;
+			stats.strideB[i] = B.shape[i] != 1 ? B.stride[i] : 0;
+			stats.out_shape[i] = C.shape[i];
+			stats.out_stride[i] = C.stride[i];
+		}
+
+		int grid = (C.total + block - 1) / block;
+
+		universalAddKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
+
+		return C;
+	}
+}
+
 Tensor Tensor::operator+(const Tensor& B) const
 {
 	vector<int> newShape = dim() >= B.dim() ? shape : B.shape;
