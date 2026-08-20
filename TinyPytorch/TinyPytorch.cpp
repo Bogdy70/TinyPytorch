@@ -735,6 +735,9 @@ int main()
         Tensor T3({ 2, 1, 4, 1, 2 });
         Tensor T4({ 1, 3, 1, 5, 2 });
         Tensor T5({ 1 });
+        Tensor T6({ 1, 3, 1, 1 });
+
+        T6 = { 1, 2, 3 };
 
         T5 = { 10 };
 
@@ -749,7 +752,7 @@ int main()
         A3 = { 1, 2 };
         B3 = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24 };
 
-        Tensor Br = T3.add(T4);
+        Tensor Br = T6 + A2;
         Br.toCPU().print();
         cout << "\n(";
         for (int i = 0; i < Br.dim(); i++)

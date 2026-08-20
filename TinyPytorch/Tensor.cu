@@ -631,6 +631,19 @@ __global__ void addKernel(float* C, const float* A, const float* B, int size, in
 	}
 }
 
+__global__ void specialAddKernel(float* C, const float* A, const float* B, int size, int subA2, int upperStrideA2, int upperA2, int subA1, int upperStrideA1, int betweenA, int subB2, int upperStrideB2, int upperB2, int subB1, int upperStrideB1, int betweenB)
+{
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		int idxA = idx / upperStrideA2 % upperA2 * subA2 + idx / upperStrideA1 % betweenA * subA1 + idx % subA1;
+		int idxB = idx / upperStrideB2 % upperB2 * subB2 + idx / upperStrideB1 % betweenB * subB1 + idx % subB1;
+
+		C[idx] = A[idxA] + B[idxB];
+	}
+}
+
 __global__ void universalAddKernel(float* C, const float* A, const float* B, int size, int dim, BroadcastStats stats)
 {
 	int idx = blockDim.x * blockIdx.x + threadIdx.x;
@@ -814,12 +827,6 @@ Tensor Tensor::operator+(const Tensor& B) const
 
 		for (int i = 0; i < dim(); i++)
 		{
-			if (newB[i] == 1)
-				axisB = i;
-
-			if (shape[i] == 1)
-				axisA = i;
-
 			if (shape[i] != 1)
 				newShape[i] = shape[i];
 			else if (newB[i] != 1)
@@ -829,6 +836,54 @@ Tensor Tensor::operator+(const Tensor& B) const
 		}
 
 		Tensor C(newShape);
+
+		bool prev_stateA = 0;
+		bool prev_stateB = 0;
+
+		vector<int> regionsA;
+		vector<int> regionsB;
+
+		bool okA = 0;
+		bool okB = 0;
+
+		for (int i = 0; i < dim(); i++)
+		{
+			bool current_stateA = shape[i] == 1 && newShape[i] > 1;
+			bool current_stateB = B.shape[i] == 1 && newShape[i] > 1;
+
+			if (current_stateA==1 && current_stateA!=prev_stateA)
+			{
+				regionsA.push_back(i);
+			}
+			if (current_stateB==1 && current_stateB!=prev_stateB)
+			{
+				regionsB.push_back(i);
+			}
+
+			prev_stateA = current_stateA;
+			prev_stateB = current_stateB;
+		}
+
+		for (int i = 0; i < dim(); i++)
+		{
+			if (i != 0 && newB[i] == 1 && newShape[i]>1 && okB == 0)
+			{
+				axisB = i;
+				okB = 1;
+			}
+		
+			if (i != 0 && shape[i] == 1 && newShape[i]>1 && okA == 0)
+			{
+				axisA = i;
+				okA = 1;
+			}
+		}
+
+		if (axisB == -1 && newB[0] == 1)
+			axisB = 0;
+
+		if (axisA == -1 && shape[0] == 1)
+			axisA = 0;
 
 		int grid = (C.total + block - 1) / block;
 
@@ -862,14 +917,23 @@ Tensor Tensor::operator+(const Tensor& B) const
 
 		newA.insert(newA.end(), shape.begin(), shape.end());
 
+		bool okA = 0;
+		bool okB = 0;
+
 		for (int i = 0; i < B.dim(); i++)
 		{
-			if (newA[i] == 1)
+			if (i!=0 && newA[i] == 1 && okA==0)
+			{
 				axisA = i;
-
-			if (B.shape[i] == 1)
+				okA = 1;
+			}
+				
+			if (i!=0 && B.shape[i] == 1 && okB==0)
+			{
 				axisB = i;
-
+				okB = 1;
+			}
+				
 			if (newA[i] != 1)
 				newShape[i] = newA[i];
 			else if (B.shape[i] != 1)
@@ -879,6 +943,12 @@ Tensor Tensor::operator+(const Tensor& B) const
 		}
 
 		Tensor C(newShape);
+
+		if (axisA == -1 && newA[0] == 1)
+			axisA = 0;
+
+		if (axisB == -1 && B.shape[0] == 1)
+			axisB = 0;
 
 		int grid = (C.total + block - 1) / block;
 
@@ -907,14 +977,23 @@ Tensor Tensor::operator+(const Tensor& B) const
 	}
 	else
 	{
+		bool okA = 0;
+		bool okB = 0;
+
 		for (int i = 0; i < dim(); i++)
 		{
-			if (shape[i] == 1)
+			if (i != 0 && shape[i] == 1 && okA == 0)
+			{
 				axisA = i;
-
-			if (B.shape[i] == 1)
+				okA = 1;
+			}
+				
+			if (i != 0 && B.shape[i] == 1 && okB == 0)
+			{
 				axisB = i;
-
+				okB = 1;
+			}
+				
 			if (shape[i] != 1)
 				newShape[i] = shape[i];
 			else if (B.shape[i] != 1)
@@ -924,6 +1003,12 @@ Tensor Tensor::operator+(const Tensor& B) const
 		}
 
 		Tensor C(newShape);
+
+		if (axisA == -1 && shape[0] == 1)
+			axisA = 0;
+
+		if (axisB == -1 && B.shape[0] == 1)
+			axisB = 0;
 
 		int grid = (C.total + block - 1) / block;
 
