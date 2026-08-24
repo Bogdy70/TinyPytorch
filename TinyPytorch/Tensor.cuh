@@ -85,8 +85,6 @@ public:
 
 	Tensor operator+(const Tensor& B) const;
 
-	Tensor add(const Tensor& B) const;
-
 	Tensor operator-(const Tensor& B) const;
 
 	Tensor operator*(float x) const;

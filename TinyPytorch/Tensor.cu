@@ -267,13 +267,39 @@ __global__ void mulKernel(float* C, const float* A, const float* B, int size, in
 	}
 }
 
+__global__ void universalMulKernel(float* C, const float* A, const float* B, int size, int dim, BroadcastStats stats)
+{
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		int idxA = 0;
+		int idxB = 0;
+
+		for (int i = 0; i < dim; i++)
+		{
+			int coord = idx / stats.out_stride[i] % stats.out_shape[i];
+
+			idxA += coord * stats.strideA[i];
+
+			idxB += coord * stats.strideB[i];
+		}
+
+		C[idx] = A[idxA] * B[idxB];
+	}
+}
+
 Tensor Tensor::operator*(const Tensor& B) const
 {
 	vector<int> newShape = dim() >= B.dim() ? shape : B.shape;
-	int axisA = -1;
-	int axisB = -1;
+
+	if (newShape.size() > MAX_TENSOR_LENGTH)
+		throw runtime_error("Tensor length exceeded!");
+
 	int subDimsB, upperDimsB, upperStrideC_B;
 	int subDimsA, upperDimsA, upperStrideC_A;
+
+	BroadcastStats stats;
 
 	int block = 256;
 
@@ -286,11 +312,8 @@ Tensor Tensor::operator*(const Tensor& B) const
 
 		for (int i = 0; i < dim(); i++)
 		{
-			if (newB[i] == 1)
-				axisB = i;
-
-			if (shape[i] == 1)
-				axisA = i;
+			if (shape[i] != newB[i] && shape[i] != 1 && newB[i] != 1)
+				throw runtime_error("Invalid Tensor shape!");
 
 			if (shape[i] != 1)
 				newShape[i] = shape[i];
@@ -302,27 +325,94 @@ Tensor Tensor::operator*(const Tensor& B) const
 
 		Tensor C(newShape);
 
+		bool prev_stateA = 0;
+		bool prev_stateB = 0;
+
+		vector<int> regionsA;
+		vector<int> regionsB;
+
+		for (int i = 0; i < dim(); i++)
+		{
+			if (newShape[i] == 1)
+				continue;
+
+			bool current_stateA = shape[i] == 1;
+			bool current_stateB = newB[i] == 1;
+
+			if (current_stateA && !prev_stateA)
+			{
+				regionsA.push_back(i);
+			}
+			if (current_stateB && !prev_stateB)
+			{
+				regionsB.push_back(i);
+			}
+
+			prev_stateA = current_stateA;
+			prev_stateB = current_stateB;
+		}
+
 		int grid = (C.total + block - 1) / block;
 
-		if (axisA == -1)
-		{
-			subDimsB = calculateStride(newB)[axisB];
-			upperDimsB = calculateTotal(newB) / subDimsB;
-			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+		bool supportA = regionsA.size() <= 1 || (regionsA.size() == 2 && regionsA[0] == 0);
+		bool supportB = regionsB.size() <= 1 || (regionsB.size() == 2 && regionsB[0] == 0);
 
-			mulKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+		if (supportA && supportB)
+		{
+			int axisA = -1;
+			int axisB = -1;
+
+			if (regionsA.size()) axisA = regionsA.size() == 1 ? regionsA[0] : regionsA[1];
+			if (regionsB.size()) axisB = regionsB.size() == 1 ? regionsB[0] : regionsB[1];
+
+			if (axisA == -1 && axisB == -1)
+			{
+				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+			}
+			else if (axisA == -1)
+			{
+				subDimsB = calculateStride(newB)[axisB];
+				upperDimsB = calculateTotal(newB) / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+			}
+			else if (axisB == -1)
+			{
+				subDimsA = stride[axisA];
+				upperDimsA = total / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+			}
+			else
+			{
+				subDimsB = calculateStride(newB)[axisB];
+				upperDimsB = calculateTotal(newB) / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				subDimsA = stride[axisA];
+				upperDimsA = total / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			}
 		}
 		else
 		{
-			subDimsB = calculateStride(newB)[axisB];
-			upperDimsB = calculateTotal(newB) / subDimsB;
-			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+			vector<int> newStride;
+			newStride.assign(dim() - B.dim(), 0);
+			newStride.insert(newStride.end(), B.stride.begin(), B.stride.end());
 
-			subDimsA = stride[axisA];
-			upperDimsA = total / subDimsA;
-			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+			for (int i = 0; i < dim(); i++)
+			{
+				stats.strideB[i] = newB[i] != 1 ? newStride[i] : 0;
+				stats.strideA[i] = shape[i] != 1 ? stride[i] : 0;
+				stats.out_stride[i] = C.stride[i];
+				stats.out_shape[i] = C.shape[i];
+			}
 
-			mulKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			universalMulKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -336,11 +426,8 @@ Tensor Tensor::operator*(const Tensor& B) const
 
 		for (int i = 0; i < B.dim(); i++)
 		{
-			if (newA[i] == 1)
-				axisA = i;
-
-			if (B.shape[i] == 1)
-				axisB = i;
+			if (newA[i] != B.shape[i] && newA[i] != 1 && B.shape[i] != 1)
+				throw runtime_error("Invalid Tensor shape!");
 
 			if (newA[i] != 1)
 				newShape[i] = newA[i];
@@ -354,25 +441,89 @@ Tensor Tensor::operator*(const Tensor& B) const
 
 		int grid = (C.total + block - 1) / block;
 
-		if (axisB == -1)
-		{
-			subDimsA = calculateStride(newA)[axisA];
-			upperDimsA = calculateTotal(newA) / subDimsA;
-			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+		vector<int> regionsA;
+		vector<int> regionsB;
 
-			mulKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+		bool prev_stateA = 0;
+		bool prev_stateB = 0;
+
+		for (int i = 0; i < B.dim(); i++)
+		{
+			if (newShape[i] == 1)
+				continue;
+
+			bool current_stateA = newA[i] == 1;
+			bool current_stateB = B.shape[i] == 1;
+
+			if (current_stateA && !prev_stateA)
+				regionsA.push_back(i);
+
+			if (current_stateB && !prev_stateB)
+				regionsB.push_back(i);
+
+			prev_stateA = current_stateA;
+			prev_stateB = current_stateB;
+		}
+
+		bool supportA = regionsA.size() <= 1 || (regionsA.size() == 2 && regionsA[0] == 0);
+		bool supportB = regionsB.size() <= 1 || (regionsB.size() == 2 && regionsB[0] == 0);
+
+		if (supportA && supportB)
+		{
+			int axisA = -1;
+			int axisB = -1;
+
+			if (regionsA.size()) axisA = regionsA.size() == 1 ? regionsA[0] : regionsA[1];
+			if (regionsB.size()) axisB = regionsB.size() == 1 ? regionsB[0] : regionsB[1];
+
+			if (axisA == -1 && axisB == -1)
+			{
+				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+			}
+			else if (axisA == -1)
+			{
+				subDimsB = B.stride[axisB];
+				upperDimsB = B.total / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+			}
+			else if (axisB == -1)
+			{
+				subDimsA = calculateStride(newA)[axisA];
+				upperDimsA = calculateTotal(newA) / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+			}
+			else
+			{
+				subDimsA = calculateStride(newA)[axisA];
+				upperDimsA = calculateTotal(newA) / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				subDimsB = B.stride[axisB];
+				upperDimsB = B.total / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			}
 		}
 		else
 		{
-			subDimsB = B.stride[axisB];
-			upperDimsB = B.total / subDimsB;
-			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+			vector<int> newStride;
+			newStride.assign(B.dim() - dim(), 0);
+			newStride.insert(newStride.end(), stride.begin(), stride.end());
 
-			subDimsA = calculateStride(newA)[axisA];
-			upperDimsA = calculateTotal(newA) / subDimsA;
-			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+			for (int i = 0; i < B.dim(); i++)
+			{
+				stats.strideA[i] = newA[i] != 1 ? newStride[i] : 0;
+				stats.strideB[i] = B.shape[i] != 1 ? B.stride[i] : 0;
+				stats.out_stride[i] = C.stride[i];
+				stats.out_shape[i] = C.shape[i];
+			}
 
-			mulKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			universalMulKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -381,11 +532,8 @@ Tensor Tensor::operator*(const Tensor& B) const
 	{
 		for (int i = 0; i < dim(); i++)
 		{
-			if (shape[i] == 1)
-				axisA = i;
-
-			if (B.shape[i] == 1)
-				axisB = i;
+			if (shape[i] != B.shape[i] && shape[i] != 1 && B.shape[i] != 1)
+				throw runtime_error("Invalid Tensor shape!");
 
 			if (shape[i] != 1)
 				newShape[i] = shape[i];
@@ -399,37 +547,85 @@ Tensor Tensor::operator*(const Tensor& B) const
 
 		int grid = (C.total + block - 1) / block;
 
-		if (axisA == -1 && axisB == -1)
-		{
-			mulKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
-		}
-		else if (axisA == -1)
-		{
-			subDimsB = B.stride[axisB];
-			upperDimsB = B.total / subDimsB;
-			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+		bool prev_stateA = 0;
+		bool prev_stateB = 0;
 
-			mulKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
-		}
-		else if (axisB == -1)
-		{
-			subDimsA = stride[axisA];
-			upperDimsA = total / subDimsA;
-			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+		vector<int> regionsA;
+		vector<int> regionsB;
 
-			mulKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+		for (int i = 0; i < dim(); i++)
+		{
+			if (newShape[i] == 1)
+				continue;
+
+			bool current_stateA = shape[i] == 1;
+			bool current_stateB = B.shape[i] == 1;
+
+			if (current_stateA && !prev_stateA)
+				regionsA.push_back(i);
+
+			if (current_stateB && !prev_stateB)
+				regionsB.push_back(i);
+
+			prev_stateA = current_stateA;
+			prev_stateB = current_stateB;
+		}
+
+		bool supportA = regionsA.size() <= 1 || (regionsA.size() == 2 && regionsA[0] == 0);
+		bool supportB = regionsB.size() <= 1 || (regionsB.size() == 2 && regionsB[0] == 0);
+
+		if (supportA && supportB)
+		{
+			int axisA = -1;
+			int axisB = -1;
+
+			if (regionsA.size()) axisA = regionsA.size() == 1 ? regionsA[0] : regionsA[1];
+			if (regionsB.size()) axisB = regionsB.size() == 1 ? regionsB[0] : regionsB[1];
+
+			if (axisA == -1 && axisB == -1)
+			{
+				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+			}
+			else if (axisA == -1)
+			{
+				subDimsB = B.stride[axisB];
+				upperDimsB = B.total / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+			}
+			else if (axisB == -1)
+			{
+				subDimsA = stride[axisA];
+				upperDimsA = total / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+			}
+			else
+			{
+				subDimsA = stride[axisA];
+				upperDimsA = total / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				subDimsB = B.stride[axisB];
+				upperDimsB = B.total / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			}
 		}
 		else
 		{
-			subDimsB = B.stride[axisB];
-			upperDimsB = B.total / subDimsB;
-			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+			for (int i = 0; i < dim(); i++)
+			{
+				stats.strideA[i] = shape[i] != 1 ? stride[i] : 0;
+				stats.strideB[i] = B.shape[i] != 1 ? B.stride[i] : 0;
+				stats.out_stride[i] = C.stride[i];
+				stats.out_shape[i] = C.shape[i];
+			}
 
-			subDimsA = stride[axisA];
-			upperDimsA = total / subDimsA;
-			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
-
-			mulKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			universalMulKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -449,13 +645,39 @@ __global__ void divKernel(float* C, const float* A, const float* B, int size, in
 	}
 }
 
+__global__ void universalDivKernel(float* C, const float* A, const float* B, int size, int dim, BroadcastStats stats)
+{
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		int idxA = 0;
+		int idxB = 0;
+
+		for (int i = 0; i < dim; i++)
+		{
+			int coord = idx / stats.out_stride[i] % stats.out_shape[i];
+
+			idxA += coord * stats.strideA[i];
+
+			idxB += coord * stats.strideB[i];
+		}
+
+		C[idx] = A[idxA] / B[idxB];
+	}
+}
+
 Tensor Tensor::operator/(const Tensor& B) const
 {
 	vector<int> newShape = dim() >= B.dim() ? shape : B.shape;
-	int axisA = -1;
-	int axisB = -1;
+
+	if (newShape.size() > MAX_TENSOR_LENGTH)
+		throw runtime_error("Tensor length exceeded!");
+
 	int subDimsB, upperDimsB, upperStrideC_B;
 	int subDimsA, upperDimsA, upperStrideC_A;
+
+	BroadcastStats stats;
 
 	int block = 256;
 
@@ -468,11 +690,8 @@ Tensor Tensor::operator/(const Tensor& B) const
 
 		for (int i = 0; i < dim(); i++)
 		{
-			if (newB[i] == 1)
-				axisB = i;
-
-			if (shape[i] == 1)
-				axisA = i;
+			if (shape[i] != newB[i] && shape[i] != 1 && newB[i] != 1)
+				throw runtime_error("Invalid Tensor shape!");
 
 			if (shape[i] != 1)
 				newShape[i] = shape[i];
@@ -484,27 +703,94 @@ Tensor Tensor::operator/(const Tensor& B) const
 
 		Tensor C(newShape);
 
+		bool prev_stateA = 0;
+		bool prev_stateB = 0;
+
+		vector<int> regionsA;
+		vector<int> regionsB;
+
+		for (int i = 0; i < dim(); i++)
+		{
+			if (newShape[i] == 1)
+				continue;
+
+			bool current_stateA = shape[i] == 1;
+			bool current_stateB = newB[i] == 1;
+
+			if (current_stateA && !prev_stateA)
+			{
+				regionsA.push_back(i);
+			}
+			if (current_stateB && !prev_stateB)
+			{
+				regionsB.push_back(i);
+			}
+
+			prev_stateA = current_stateA;
+			prev_stateB = current_stateB;
+		}
+
 		int grid = (C.total + block - 1) / block;
 
-		if (axisA == -1)
-		{
-			subDimsB = calculateStride(newB)[axisB];
-			upperDimsB = calculateTotal(newB) / subDimsB;
-			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+		bool supportA = regionsA.size() <= 1 || (regionsA.size() == 2 && regionsA[0] == 0);
+		bool supportB = regionsB.size() <= 1 || (regionsB.size() == 2 && regionsB[0] == 0);
 
-			divKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+		if (supportA && supportB)
+		{
+			int axisA = -1;
+			int axisB = -1;
+
+			if (regionsA.size()) axisA = regionsA.size() == 1 ? regionsA[0] : regionsA[1];
+			if (regionsB.size()) axisB = regionsB.size() == 1 ? regionsB[0] : regionsB[1];
+
+			if (axisA == -1 && axisB == -1)
+			{
+				divKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+			}
+			else if (axisA == -1)
+			{
+				subDimsB = calculateStride(newB)[axisB];
+				upperDimsB = calculateTotal(newB) / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				divKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+			}
+			else if (axisB == -1)
+			{
+				subDimsA = stride[axisA];
+				upperDimsA = total / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				divKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+			}
+			else
+			{
+				subDimsB = calculateStride(newB)[axisB];
+				upperDimsB = calculateTotal(newB) / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				subDimsA = stride[axisA];
+				upperDimsA = total / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				divKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			}
 		}
 		else
 		{
-			subDimsB = calculateStride(newB)[axisB];
-			upperDimsB = calculateTotal(newB) / subDimsB;
-			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+			vector<int> newStride;
+			newStride.assign(dim() - B.dim(), 0);
+			newStride.insert(newStride.end(), B.stride.begin(), B.stride.end());
 
-			subDimsA = stride[axisA];
-			upperDimsA = total / subDimsA;
-			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+			for (int i = 0; i < dim(); i++)
+			{
+				stats.strideB[i] = newB[i] != 1 ? newStride[i] : 0;
+				stats.strideA[i] = shape[i] != 1 ? stride[i] : 0;
+				stats.out_stride[i] = C.stride[i];
+				stats.out_shape[i] = C.shape[i];
+			}
 
-			divKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			universalDivKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -518,11 +804,8 @@ Tensor Tensor::operator/(const Tensor& B) const
 
 		for (int i = 0; i < B.dim(); i++)
 		{
-			if (newA[i] == 1)
-				axisA = i;
-
-			if (B.shape[i] == 1)
-				axisB = i;
+			if (newA[i] != B.shape[i] && newA[i] != 1 && B.shape[i] != 1)
+				throw runtime_error("Invalid Tensor shape!");
 
 			if (newA[i] != 1)
 				newShape[i] = newA[i];
@@ -536,25 +819,89 @@ Tensor Tensor::operator/(const Tensor& B) const
 
 		int grid = (C.total + block - 1) / block;
 
-		if (axisB == -1)
-		{
-			subDimsA = calculateStride(newA)[axisA];
-			upperDimsA = calculateTotal(newA) / subDimsA;
-			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+		vector<int> regionsA;
+		vector<int> regionsB;
 
-			divKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+		bool prev_stateA = 0;
+		bool prev_stateB = 0;
+
+		for (int i = 0; i < B.dim(); i++)
+		{
+			if (newShape[i] == 1)
+				continue;
+
+			bool current_stateA = newA[i] == 1;
+			bool current_stateB = B.shape[i] == 1;
+
+			if (current_stateA && !prev_stateA)
+				regionsA.push_back(i);
+
+			if (current_stateB && !prev_stateB)
+				regionsB.push_back(i);
+
+			prev_stateA = current_stateA;
+			prev_stateB = current_stateB;
+		}
+
+		bool supportA = regionsA.size() <= 1 || (regionsA.size() == 2 && regionsA[0] == 0);
+		bool supportB = regionsB.size() <= 1 || (regionsB.size() == 2 && regionsB[0] == 0);
+
+		if (supportA && supportB)
+		{
+			int axisA = -1;
+			int axisB = -1;
+
+			if (regionsA.size()) axisA = regionsA.size() == 1 ? regionsA[0] : regionsA[1];
+			if (regionsB.size()) axisB = regionsB.size() == 1 ? regionsB[0] : regionsB[1];
+
+			if (axisA == -1 && axisB == -1)
+			{
+				divKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+			}
+			else if (axisA == -1)
+			{
+				subDimsB = B.stride[axisB];
+				upperDimsB = B.total / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				divKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+			}
+			else if (axisB == -1)
+			{
+				subDimsA = calculateStride(newA)[axisA];
+				upperDimsA = calculateTotal(newA) / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				divKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+			}
+			else
+			{
+				subDimsA = calculateStride(newA)[axisA];
+				upperDimsA = calculateTotal(newA) / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				subDimsB = B.stride[axisB];
+				upperDimsB = B.total / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				divKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			}
 		}
 		else
 		{
-			subDimsB = B.stride[axisB];
-			upperDimsB = B.total / subDimsB;
-			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+			vector<int> newStride;
+			newStride.assign(B.dim() - dim(), 0);
+			newStride.insert(newStride.end(), stride.begin(), stride.end());
 
-			subDimsA = calculateStride(newA)[axisA];
-			upperDimsA = calculateTotal(newA) / subDimsA;
-			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+			for (int i = 0; i < B.dim(); i++)
+			{
+				stats.strideA[i] = newA[i] != 1 ? newStride[i] : 0;
+				stats.strideB[i] = B.shape[i] != 1 ? B.stride[i] : 0;
+				stats.out_stride[i] = C.stride[i];
+				stats.out_shape[i] = C.shape[i];
+			}
 
-			divKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			universalDivKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -563,11 +910,8 @@ Tensor Tensor::operator/(const Tensor& B) const
 	{
 		for (int i = 0; i < dim(); i++)
 		{
-			if (shape[i] == 1)
-				axisA = i;
-
-			if (B.shape[i] == 1)
-				axisB = i;
+			if (shape[i] != B.shape[i] && shape[i] != 1 && B.shape[i] != 1)
+				throw runtime_error("Invalid Tensor shape!");
 
 			if (shape[i] != 1)
 				newShape[i] = shape[i];
@@ -581,37 +925,85 @@ Tensor Tensor::operator/(const Tensor& B) const
 
 		int grid = (C.total + block - 1) / block;
 
-		if (axisA == -1 && axisB == -1)
-		{
-			divKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
-		}
-		else if (axisA == -1)
-		{
-			subDimsB = B.stride[axisB];
-			upperDimsB = B.total / subDimsB;
-			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+		bool prev_stateA = 0;
+		bool prev_stateB = 0;
 
-			divKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
-		}
-		else if (axisB == -1)
-		{
-			subDimsA = stride[axisA];
-			upperDimsA = total / subDimsA;
-			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+		vector<int> regionsA;
+		vector<int> regionsB;
 
-			divKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+		for (int i = 0; i < dim(); i++)
+		{
+			if (newShape[i] == 1)
+				continue;
+
+			bool current_stateA = shape[i] == 1;
+			bool current_stateB = B.shape[i] == 1;
+
+			if (current_stateA && !prev_stateA)
+				regionsA.push_back(i);
+
+			if (current_stateB && !prev_stateB)
+				regionsB.push_back(i);
+
+			prev_stateA = current_stateA;
+			prev_stateB = current_stateB;
+		}
+
+		bool supportA = regionsA.size() <= 1 || (regionsA.size() == 2 && regionsA[0] == 0);
+		bool supportB = regionsB.size() <= 1 || (regionsB.size() == 2 && regionsB[0] == 0);
+
+		if (supportA && supportB)
+		{
+			int axisA = -1;
+			int axisB = -1;
+
+			if (regionsA.size()) axisA = regionsA.size() == 1 ? regionsA[0] : regionsA[1];
+			if (regionsB.size()) axisB = regionsB.size() == 1 ? regionsB[0] : regionsB[1];
+
+			if (axisA == -1 && axisB == -1)
+			{
+				divKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+			}
+			else if (axisA == -1)
+			{
+				subDimsB = B.stride[axisB];
+				upperDimsB = B.total / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				divKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+			}
+			else if (axisB == -1)
+			{
+				subDimsA = stride[axisA];
+				upperDimsA = total / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				divKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+			}
+			else
+			{
+				subDimsA = stride[axisA];
+				upperDimsA = total / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				subDimsB = B.stride[axisB];
+				upperDimsB = B.total / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				divKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			}
 		}
 		else
 		{
-			subDimsB = B.stride[axisB];
-			upperDimsB = B.total / subDimsB;
-			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+			for (int i = 0; i < dim(); i++)
+			{
+				stats.strideA[i] = shape[i] != 1 ? stride[i] : 0;
+				stats.strideB[i] = B.shape[i] != 1 ? B.stride[i] : 0;
+				stats.out_stride[i] = C.stride[i];
+				stats.out_shape[i] = C.shape[i];
+			}
 
-			subDimsA = stride[axisA];
-			upperDimsA = total / subDimsA;
-			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
-
-			divKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			universalDivKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -666,167 +1058,32 @@ __global__ void universalAddKernel(float* C, const float* A, const float* B, int
 	}
 }
 
-Tensor Tensor::add(const Tensor& B) const
+Tensor Tensor::operator+(const Tensor& B) const
 {
 	vector<int> newShape = dim() >= B.dim() ? shape : B.shape;
 
 	if (newShape.size() > MAX_TENSOR_LENGTH)
 		throw runtime_error("Tensor length exceeded!");
 
-	int block = 256;
+	int subDimsB, upperDimsB, upperStrideC_B;
+	int subDimsA, upperDimsA, upperStrideC_A;
 
 	BroadcastStats stats;
+
+	int block = 256;
 
 	if (dim() > B.dim())
 	{
 		vector<int> newB;
-		vector<int> newStride;
-
 		newB.assign(dim() - B.dim(), 1);
-		newStride.assign(dim() - B.dim(), 1);
 
 		newB.insert(newB.end(), B.shape.begin(), B.shape.end());
-		newStride.insert(newStride.end(), B.stride.begin(), B.stride.end());
 
 		for (int i = 0; i < dim(); i++)
 		{
 			if (shape[i] != newB[i] && shape[i] != 1 && newB[i] != 1)
 				throw runtime_error("Invalid Tensor shape!");
 
-			if (shape[i] != 1)
-			{
-				newShape[i] = shape[i];
-			}
-			else if (newB[i] != 1)
-			{
-				newShape[i] = newB[i];
-			}
-			else
-			{
-				newShape[i] = 1;
-			}
-		}
-
-		Tensor C(newShape);
-
-		for (int i = 0; i < C.dim(); i++)
-		{
-			stats.strideA[i] = shape[i] != 1 ? stride[i] : 0;
-			stats.strideB[i] = newB[i] != 1 ? newStride[i] : 0;
-			stats.out_shape[i] = C.shape[i];
-			stats.out_stride[i] = C.stride[i];
-		}
-
-		int grid = (C.total + block - 1) / block;
-
-		universalAddKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
-
-		return C;
-	}
-	else if (B.dim() > dim())
-	{
-		vector<int> newA;
-		vector<int> newStride;
-
-		newA.assign(B.dim() - dim(), 1);
-		newStride.assign(B.dim() - dim(), 1);
-
-		newA.insert(newA.end(), shape.begin(), shape.end());
-		newStride.insert(newStride.end(), stride.begin(), stride.end());
-
-		for (int i = 0; i < B.dim(); i++)
-		{
-			if (newA[i] != B.shape[i] && newA[i] != 1 && B.shape[i] != 1)
-				throw runtime_error("Invalid Tensor shape!");
-
-			if (newA[i] != 1)
-			{
-				newShape[i] = newA[i];
-			}
-			else if (B.shape[i] != 1)
-			{
-				newShape[i] = B.shape[i];
-			}
-			else
-			{
-				newShape[i] = 1;
-			}
-		}
-
-		Tensor C(newShape);
-
-		for (int i = 0; i < C.dim(); i++)
-		{
-			stats.strideA[i] = newA[i] != 1 ? newStride[i] : 0;
-			stats.strideB[i] = B.shape[i] != 1 ? B.stride[i] : 0;
-			stats.out_shape[i] = C.shape[i];
-			stats.out_stride[i] = C.stride[i];
-		}
-
-		int grid = (C.total + block - 1) / block;
-
-		universalAddKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
-
-		return C;
-	}
-	else
-	{
-		for (int i = 0; i < dim(); i++)
-		{
-			if (shape[i] != B.shape[i] && shape[i] != 1 && B.shape[i] != 1)
-				throw runtime_error("Innvalid Tensor shape!");
-
-			if (shape[i] != 1)
-			{
-				newShape[i] = shape[i];
-			}
-			else if (B.shape[i] != 1)
-			{
-				newShape[i] = B.shape[i];
-			}
-			else
-			{
-				newShape[i] = 1;
-			}
-		}
-
-		Tensor C(newShape);
-
-		for (int i = 0; i < C.dim(); i++)
-		{
-			stats.strideA[i] = shape[i] != 1 ? stride[i] : 0;
-			stats.strideB[i] = B.shape[i] != 1 ? B.stride[i] : 0;
-			stats.out_shape[i] = C.shape[i];
-			stats.out_stride[i] = C.stride[i];
-		}
-
-		int grid = (C.total + block - 1) / block;
-
-		universalAddKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
-
-		return C;
-	}
-}
-
-Tensor Tensor::operator+(const Tensor& B) const
-{
-	vector<int> newShape = dim() >= B.dim() ? shape : B.shape;
-	int axisA = -1;
-	int axisB = -1;
-	int subDimsB, upperDimsB, upperStrideC_B;
-	int subDimsA, upperDimsA, upperStrideC_A;
-
-	int block = 256;
-
-	if (dim() > B.dim())
-	{
-		vector<int> newB;
-		newB.assign(dim() - B.dim(), 1);
-
-		newB.insert(newB.end(), B.shape.begin(), B.shape.end());
-
-		for (int i = 0; i < dim(); i++)
-		{
 			if (shape[i] != 1)
 				newShape[i] = shape[i];
 			else if (newB[i] != 1)
@@ -843,19 +1100,19 @@ Tensor Tensor::operator+(const Tensor& B) const
 		vector<int> regionsA;
 		vector<int> regionsB;
 
-		bool okA = 0;
-		bool okB = 0;
-
 		for (int i = 0; i < dim(); i++)
 		{
-			bool current_stateA = shape[i] == 1 && newShape[i] > 1;
-			bool current_stateB = B.shape[i] == 1 && newShape[i] > 1;
+			if (newShape[i] == 1)
+				continue;
 
-			if (current_stateA==1 && current_stateA!=prev_stateA)
+			bool current_stateA = shape[i] == 1;
+			bool current_stateB = newB[i] == 1;
+
+			if (current_stateA && !prev_stateA)
 			{
 				regionsA.push_back(i);
 			}
-			if (current_stateB==1 && current_stateB!=prev_stateB)
+			if (current_stateB && !prev_stateB)
 			{
 				regionsB.push_back(i);
 			}
@@ -864,48 +1121,67 @@ Tensor Tensor::operator+(const Tensor& B) const
 			prev_stateB = current_stateB;
 		}
 
-		for (int i = 0; i < dim(); i++)
-		{
-			if (i != 0 && newB[i] == 1 && newShape[i]>1 && okB == 0)
-			{
-				axisB = i;
-				okB = 1;
-			}
-		
-			if (i != 0 && shape[i] == 1 && newShape[i]>1 && okA == 0)
-			{
-				axisA = i;
-				okA = 1;
-			}
-		}
-
-		if (axisB == -1 && newB[0] == 1)
-			axisB = 0;
-
-		if (axisA == -1 && shape[0] == 1)
-			axisA = 0;
-
 		int grid = (C.total + block - 1) / block;
 
-		if (axisA == -1)
-		{
-			subDimsB = calculateStride(newB)[axisB];
-			upperDimsB = calculateTotal(newB) / subDimsB;
-			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+		bool supportA = regionsA.size() <= 1 || (regionsA.size() == 2 && regionsA[0] == 0);
+		bool supportB = regionsB.size() <= 1 || (regionsB.size() == 2 && regionsB[0] == 0);
 
-			addKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+		if (supportA && supportB)
+		{
+			int axisA = -1;
+			int axisB = -1;
+
+			if (regionsA.size()) axisA = regionsA.size() == 1 ? regionsA[0] : regionsA[1];
+			if (regionsB.size()) axisB = regionsB.size() == 1 ? regionsB[0] : regionsB[1];
+
+			if (axisA == -1 && axisB == -1)
+			{
+				addKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+			}
+			else if (axisA == -1)
+			{
+				subDimsB = calculateStride(newB)[axisB];
+				upperDimsB = calculateTotal(newB) / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				addKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+			}
+			else if (axisB == -1)
+			{
+				subDimsA = stride[axisA];
+				upperDimsA = total / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+			}
+			else
+			{
+				subDimsB = calculateStride(newB)[axisB];
+				upperDimsB = calculateTotal(newB) / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				subDimsA = stride[axisA];
+				upperDimsA = total / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			}
 		}
 		else
 		{
-			subDimsB = calculateStride(newB)[axisB];
-			upperDimsB = calculateTotal(newB) / subDimsB;
-			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+			vector<int> newStride;
+			newStride.assign(dim() - B.dim(), 0);
+			newStride.insert(newStride.end(), B.stride.begin(), B.stride.end());
 
-			subDimsA = stride[axisA];
-			upperDimsA = total / subDimsA;
-			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+			for (int i = 0; i < dim(); i++)
+			{
+				stats.strideB[i] = newB[i] != 1 ? newStride[i] : 0;
+				stats.strideA[i] = shape[i] != 1 ? stride[i] : 0;
+				stats.out_stride[i] = C.stride[i];
+				stats.out_shape[i] = C.shape[i];
+			}
 
-			addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			universalAddKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -917,22 +1193,10 @@ Tensor Tensor::operator+(const Tensor& B) const
 
 		newA.insert(newA.end(), shape.begin(), shape.end());
 
-		bool okA = 0;
-		bool okB = 0;
-
 		for (int i = 0; i < B.dim(); i++)
 		{
-			if (i!=0 && newA[i] == 1 && okA==0)
-			{
-				axisA = i;
-				okA = 1;
-			}
-				
-			if (i!=0 && B.shape[i] == 1 && okB==0)
-			{
-				axisB = i;
-				okB = 1;
-			}
+			if (newA[i] != B.shape[i] && newA[i] != 1 && B.shape[i] != 1)
+				throw runtime_error("Invalid Tensor shape!");
 				
 			if (newA[i] != 1)
 				newShape[i] = newA[i];
@@ -944,55 +1208,101 @@ Tensor Tensor::operator+(const Tensor& B) const
 
 		Tensor C(newShape);
 
-		if (axisA == -1 && newA[0] == 1)
-			axisA = 0;
-
-		if (axisB == -1 && B.shape[0] == 1)
-			axisB = 0;
-
 		int grid = (C.total + block - 1) / block;
 
-		if (axisB == -1)
-		{
-			subDimsA = calculateStride(newA)[axisA];
-			upperDimsA = calculateTotal(newA) / subDimsA;
-			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+		vector<int> regionsA;
+		vector<int> regionsB;
 
-			addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+		bool prev_stateA = 0;
+		bool prev_stateB = 0;
+
+		for (int i = 0; i < B.dim(); i++)
+		{
+			if (newShape[i] == 1)
+				continue;
+
+			bool current_stateA = newA[i] == 1;
+			bool current_stateB = B.shape[i] == 1;
+
+			if (current_stateA && !prev_stateA)
+				regionsA.push_back(i);
+
+			if (current_stateB && !prev_stateB)
+				regionsB.push_back(i);
+
+			prev_stateA = current_stateA;
+			prev_stateB = current_stateB;
+		}
+
+		bool supportA = regionsA.size() <= 1 || (regionsA.size() == 2 && regionsA[0] == 0);
+		bool supportB = regionsB.size() <= 1 || (regionsB.size() == 2 && regionsB[0] == 0);
+
+		if (supportA && supportB)
+		{
+			int axisA = -1;
+			int axisB = -1;
+
+			if (regionsA.size()) axisA = regionsA.size() == 1 ? regionsA[0] : regionsA[1];
+			if (regionsB.size()) axisB = regionsB.size() == 1 ? regionsB[0] : regionsB[1];
+
+			if (axisA == -1 && axisB == -1)
+			{
+				addKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+			}
+			else if (axisA == -1)
+			{
+				subDimsB = B.stride[axisB];
+				upperDimsB = B.total / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				addKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+			}
+			else if (axisB == -1)
+			{
+				subDimsA = calculateStride(newA)[axisA];
+				upperDimsA = calculateTotal(newA) / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+			}
+			else
+			{
+				subDimsA = calculateStride(newA)[axisA];
+				upperDimsA = calculateTotal(newA) / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				subDimsB = B.stride[axisB];
+				upperDimsB = B.total / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			}
 		}
 		else
 		{
-			subDimsB = B.stride[axisB];
-			upperDimsB = B.total / subDimsB;
-			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+			vector<int> newStride;
+			newStride.assign(B.dim() - dim(), 0);
+			newStride.insert(newStride.end(), stride.begin(), stride.end());
 
-			subDimsA = calculateStride(newA)[axisA];
-			upperDimsA = calculateTotal(newA) / subDimsA;
-			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+			for (int i = 0; i < B.dim(); i++)
+			{
+				stats.strideA[i] = newA[i] != 1 ? newStride[i] : 0;
+				stats.strideB[i] = B.shape[i] != 1 ? B.stride[i] : 0;
+				stats.out_stride[i] = C.stride[i];
+				stats.out_shape[i] = C.shape[i];
+			}
 
-			addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			universalAddKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
 		}
 
 		return C;
 	}
 	else
 	{
-		bool okA = 0;
-		bool okB = 0;
-
 		for (int i = 0; i < dim(); i++)
 		{
-			if (i != 0 && shape[i] == 1 && okA == 0)
-			{
-				axisA = i;
-				okA = 1;
-			}
-				
-			if (i != 0 && B.shape[i] == 1 && okB == 0)
-			{
-				axisB = i;
-				okB = 1;
-			}
+			if (shape[i] != B.shape[i] && shape[i] != 1 && B.shape[i] != 1)
+				throw runtime_error("Invalid Tensor shape!");
 				
 			if (shape[i] != 1)
 				newShape[i] = shape[i];
@@ -1004,45 +1314,87 @@ Tensor Tensor::operator+(const Tensor& B) const
 
 		Tensor C(newShape);
 
-		if (axisA == -1 && shape[0] == 1)
-			axisA = 0;
-
-		if (axisB == -1 && B.shape[0] == 1)
-			axisB = 0;
-
 		int grid = (C.total + block - 1) / block;
 
-		if (axisA == -1 && axisB == -1)
-		{
-			addKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
-		}
-		else if (axisA == -1)
-		{
-			subDimsB = B.stride[axisB];
-			upperDimsB = B.total / subDimsB;
-			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+		bool prev_stateA = 0;
+		bool prev_stateB = 0;
 
-			addKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
-		}
-		else if (axisB == -1)
-		{
-			subDimsA = stride[axisA];
-			upperDimsA = total / subDimsA;
-			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+		vector<int> regionsA;
+		vector<int> regionsB;
 
-			addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+		for (int i = 0; i < dim(); i++)
+		{
+			if (newShape[i] == 1)
+				continue;
+
+			bool current_stateA = shape[i] == 1;
+			bool current_stateB = B.shape[i] == 1;
+
+			if (current_stateA && !prev_stateA)
+				regionsA.push_back(i);
+
+			if (current_stateB && !prev_stateB)
+				regionsB.push_back(i);
+
+			prev_stateA = current_stateA;
+			prev_stateB = current_stateB;
+		}
+
+		bool supportA = regionsA.size() <= 1 || (regionsA.size() == 2 && regionsA[0] == 0);
+		bool supportB = regionsB.size() <= 1 || (regionsB.size() == 2 && regionsB[0] == 0);
+
+		if (supportA && supportB)
+		{
+			int axisA = -1;
+			int axisB = -1;
+
+			if (regionsA.size()) axisA = regionsA.size() == 1 ? regionsA[0] : regionsA[1];
+			if (regionsB.size()) axisB = regionsB.size() == 1 ? regionsB[0] : regionsB[1];
+
+			if (axisA == -1 && axisB == -1)
+			{
+				addKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+			}
+			else if (axisA == -1)
+			{
+				subDimsB = B.stride[axisB];
+				upperDimsB = B.total / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				addKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+			}
+			else if (axisB == -1)
+			{
+				subDimsA = stride[axisA];
+				upperDimsA = total / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+			}
+			else
+			{
+				subDimsA = stride[axisA];
+				upperDimsA = total / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				subDimsB = B.stride[axisB];
+				upperDimsB = B.total / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			}
 		}
 		else
 		{
-			subDimsB = B.stride[axisB];
-			upperDimsB = B.total / subDimsB;
-			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+			for (int i = 0; i < dim(); i++)
+			{
+				stats.strideA[i] = shape[i] != 1 ? stride[i] : 0;
+				stats.strideB[i] = B.shape[i] != 1 ? B.stride[i] : 0;
+				stats.out_stride[i] = C.stride[i];
+				stats.out_shape[i] = C.shape[i];
+			}
 
-			subDimsA = stride[axisA];
-			upperDimsA = total / subDimsA;
-			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
-
-			addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			universalAddKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -1062,13 +1414,39 @@ __global__ void subKernel(float* C, const float* A, const float* B, int size, in
 	}
 }
 
+__global__ void universalSubKernel(float* C, const float* A, const float* B, int size, int dim, BroadcastStats stats)
+{
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		int idxA = 0;
+		int idxB = 0;
+
+		for (int i = 0; i < dim; i++)
+		{
+			int coord = idx / stats.out_stride[i] % stats.out_shape[i];
+
+			idxA += coord * stats.strideA[i];
+
+			idxB += coord * stats.strideB[i];
+		}
+
+		C[idx] = A[idxA] - B[idxB];
+	}
+}
+
 Tensor Tensor::operator-(const Tensor& B) const
 {
 	vector<int> newShape = dim() >= B.dim() ? shape : B.shape;
-	int axisA = -1;
-	int axisB = -1;
+
+	if (newShape.size() > MAX_TENSOR_LENGTH)
+		throw runtime_error("Tensor length exceeded!");
+
 	int subDimsB, upperDimsB, upperStrideC_B;
 	int subDimsA, upperDimsA, upperStrideC_A;
+
+	BroadcastStats stats;
 
 	int block = 256;
 
@@ -1081,11 +1459,8 @@ Tensor Tensor::operator-(const Tensor& B) const
 
 		for (int i = 0; i < dim(); i++)
 		{
-			if (newB[i] == 1)
-				axisB = i;
-
-			if (shape[i] == 1)
-				axisA = i;
+			if (shape[i] != newB[i] && shape[i] != 1 && newB[i] != 1)
+				throw runtime_error("Invalid Tensor shape!");
 
 			if (shape[i] != 1)
 				newShape[i] = shape[i];
@@ -1097,27 +1472,94 @@ Tensor Tensor::operator-(const Tensor& B) const
 
 		Tensor C(newShape);
 
+		bool prev_stateA = 0;
+		bool prev_stateB = 0;
+
+		vector<int> regionsA;
+		vector<int> regionsB;
+
+		for (int i = 0; i < dim(); i++)
+		{
+			if (newShape[i] == 1)
+				continue;
+
+			bool current_stateA = shape[i] == 1;
+			bool current_stateB = newB[i] == 1;
+
+			if (current_stateA && !prev_stateA)
+			{
+				regionsA.push_back(i);
+			}
+			if (current_stateB && !prev_stateB)
+			{
+				regionsB.push_back(i);
+			}
+
+			prev_stateA = current_stateA;
+			prev_stateB = current_stateB;
+		}
+
 		int grid = (C.total + block - 1) / block;
 
-		if (axisA == -1)
-		{
-			subDimsB = calculateStride(newB)[axisB];
-			upperDimsB = calculateTotal(newB) / subDimsB;
-			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+		bool supportA = regionsA.size() <= 1 || (regionsA.size() == 2 && regionsA[0] == 0);
+		bool supportB = regionsB.size() <= 1 || (regionsB.size() == 2 && regionsB[0] == 0);
 
-			subKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+		if (supportA && supportB)
+		{
+			int axisA = -1;
+			int axisB = -1;
+
+			if (regionsA.size()) axisA = regionsA.size() == 1 ? regionsA[0] : regionsA[1];
+			if (regionsB.size()) axisB = regionsB.size() == 1 ? regionsB[0] : regionsB[1];
+
+			if (axisA == -1 && axisB == -1)
+			{
+				subKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+			}
+			else if (axisA == -1)
+			{
+				subDimsB = calculateStride(newB)[axisB];
+				upperDimsB = calculateTotal(newB) / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				subKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+			}
+			else if (axisB == -1)
+			{
+				subDimsA = stride[axisA];
+				upperDimsA = total / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				subKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+			}
+			else
+			{
+				subDimsB = calculateStride(newB)[axisB];
+				upperDimsB = calculateTotal(newB) / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				subDimsA = stride[axisA];
+				upperDimsA = total / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				subKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			}
 		}
 		else
 		{
-			subDimsB = calculateStride(newB)[axisB];
-			upperDimsB = calculateTotal(newB) / subDimsB;
-			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+			vector<int> newStride;
+			newStride.assign(dim() - B.dim(), 0);
+			newStride.insert(newStride.end(), B.stride.begin(), B.stride.end());
 
-			subDimsA = stride[axisA];
-			upperDimsA = total / subDimsA;
-			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+			for (int i = 0; i < dim(); i++)
+			{
+				stats.strideB[i] = newB[i] != 1 ? newStride[i] : 0;
+				stats.strideA[i] = shape[i] != 1 ? stride[i] : 0;
+				stats.out_stride[i] = C.stride[i];
+				stats.out_shape[i] = C.shape[i];
+			}
 
-			subKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			universalSubKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -1131,11 +1573,8 @@ Tensor Tensor::operator-(const Tensor& B) const
 
 		for (int i = 0; i < B.dim(); i++)
 		{
-			if (newA[i] == 1)
-				axisA = i;
-
-			if (B.shape[i] == 1)
-				axisB = i;
+			if (newA[i] != B.shape[i] && newA[i] != 1 && B.shape[i] != 1)
+				throw runtime_error("Invalid Tensor shape!");
 
 			if (newA[i] != 1)
 				newShape[i] = newA[i];
@@ -1149,25 +1588,89 @@ Tensor Tensor::operator-(const Tensor& B) const
 
 		int grid = (C.total + block - 1) / block;
 
-		if (axisB == -1)
-		{
-			subDimsA = calculateStride(newA)[axisA];
-			upperDimsA = calculateTotal(newA) / subDimsA;
-			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+		vector<int> regionsA;
+		vector<int> regionsB;
 
-			subKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+		bool prev_stateA = 0;
+		bool prev_stateB = 0;
+
+		for (int i = 0; i < B.dim(); i++)
+		{
+			if (newShape[i] == 1)
+				continue;
+
+			bool current_stateA = newA[i] == 1;
+			bool current_stateB = B.shape[i] == 1;
+
+			if (current_stateA && !prev_stateA)
+				regionsA.push_back(i);
+
+			if (current_stateB && !prev_stateB)
+				regionsB.push_back(i);
+
+			prev_stateA = current_stateA;
+			prev_stateB = current_stateB;
+		}
+
+		bool supportA = regionsA.size() <= 1 || (regionsA.size() == 2 && regionsA[0] == 0);
+		bool supportB = regionsB.size() <= 1 || (regionsB.size() == 2 && regionsB[0] == 0);
+
+		if (supportA && supportB)
+		{
+			int axisA = -1;
+			int axisB = -1;
+
+			if (regionsA.size()) axisA = regionsA.size() == 1 ? regionsA[0] : regionsA[1];
+			if (regionsB.size()) axisB = regionsB.size() == 1 ? regionsB[0] : regionsB[1];
+
+			if (axisA == -1 && axisB == -1)
+			{
+				subKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+			}
+			else if (axisA == -1)
+			{
+				subDimsB = B.stride[axisB];
+				upperDimsB = B.total / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				subKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+			}
+			else if (axisB == -1)
+			{
+				subDimsA = calculateStride(newA)[axisA];
+				upperDimsA = calculateTotal(newA) / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				subKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+			}
+			else
+			{
+				subDimsA = calculateStride(newA)[axisA];
+				upperDimsA = calculateTotal(newA) / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				subDimsB = B.stride[axisB];
+				upperDimsB = B.total / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				subKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			}
 		}
 		else
 		{
-			subDimsB = B.stride[axisB];
-			upperDimsB = B.total / subDimsB;
-			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+			vector<int> newStride;
+			newStride.assign(B.dim() - dim(), 0);
+			newStride.insert(newStride.end(), stride.begin(), stride.end());
 
-			subDimsA = calculateStride(newA)[axisA];
-			upperDimsA = calculateTotal(newA) / subDimsA;
-			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+			for (int i = 0; i < B.dim(); i++)
+			{
+				stats.strideA[i] = newA[i] != 1 ? newStride[i] : 0;
+				stats.strideB[i] = B.shape[i] != 1 ? B.stride[i] : 0;
+				stats.out_stride[i] = C.stride[i];
+				stats.out_shape[i] = C.shape[i];
+			}
 
-			subKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			universalSubKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -1176,11 +1679,8 @@ Tensor Tensor::operator-(const Tensor& B) const
 	{
 		for (int i = 0; i < dim(); i++)
 		{
-			if (shape[i] == 1)
-				axisA = i;
-
-			if (B.shape[i] == 1)
-				axisB = i;
+			if (shape[i] != B.shape[i] && shape[i] != 1 && B.shape[i] != 1)
+				throw runtime_error("Invalid Tensor shape!");
 
 			if (shape[i] != 1)
 				newShape[i] = shape[i];
@@ -1194,37 +1694,85 @@ Tensor Tensor::operator-(const Tensor& B) const
 
 		int grid = (C.total + block - 1) / block;
 
-		if (axisA == -1 && axisB == -1)
-		{
-			subKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
-		}
-		else if (axisA == -1)
-		{
-			subDimsB = B.stride[axisB];
-			upperDimsB = B.total / subDimsB;
-			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+		bool prev_stateA = 0;
+		bool prev_stateB = 0;
 
-			subKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
-		}
-		else if (axisB == -1)
-		{
-			subDimsA = stride[axisA];
-			upperDimsA = total / subDimsA;
-			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+		vector<int> regionsA;
+		vector<int> regionsB;
 
-			subKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+		for (int i = 0; i < dim(); i++)
+		{
+			if (newShape[i] == 1)
+				continue;
+
+			bool current_stateA = shape[i] == 1;
+			bool current_stateB = B.shape[i] == 1;
+
+			if (current_stateA && !prev_stateA)
+				regionsA.push_back(i);
+
+			if (current_stateB && !prev_stateB)
+				regionsB.push_back(i);
+
+			prev_stateA = current_stateA;
+			prev_stateB = current_stateB;
+		}
+
+		bool supportA = regionsA.size() <= 1 || (regionsA.size() == 2 && regionsA[0] == 0);
+		bool supportB = regionsB.size() <= 1 || (regionsB.size() == 2 && regionsB[0] == 0);
+
+		if (supportA && supportB)
+		{
+			int axisA = -1;
+			int axisB = -1;
+
+			if (regionsA.size()) axisA = regionsA.size() == 1 ? regionsA[0] : regionsA[1];
+			if (regionsB.size()) axisB = regionsB.size() == 1 ? regionsB[0] : regionsB[1];
+
+			if (axisA == -1 && axisB == -1)
+			{
+				subKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+			}
+			else if (axisA == -1)
+			{
+				subDimsB = B.stride[axisB];
+				upperDimsB = B.total / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				subKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+			}
+			else if (axisB == -1)
+			{
+				subDimsA = stride[axisA];
+				upperDimsA = total / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				subKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+			}
+			else
+			{
+				subDimsA = stride[axisA];
+				upperDimsA = total / subDimsA;
+				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
+
+				subDimsB = B.stride[axisB];
+				upperDimsB = B.total / subDimsB;
+				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+
+				subKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			}
 		}
 		else
 		{
-			subDimsB = B.stride[axisB];
-			upperDimsB = B.total / subDimsB;
-			upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
+			for (int i = 0; i < dim(); i++)
+			{
+				stats.strideA[i] = shape[i] != 1 ? stride[i] : 0;
+				stats.strideB[i] = B.shape[i] != 1 ? B.stride[i] : 0;
+				stats.out_stride[i] = C.stride[i];
+				stats.out_shape[i] = C.shape[i];
+			}
 
-			subDimsA = stride[axisA];
-			upperDimsA = total / subDimsA;
-			upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
-
-			subKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+			universalSubKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
 		}
 
 		return C;
