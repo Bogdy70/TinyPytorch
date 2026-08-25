@@ -254,28 +254,39 @@ Tensor& Tensor::unsqueeze(int dim)
 	return *this;
 }
 
-__global__ void paddingKernel(float* C, const float* A, int size, int M, int pM, int padding)
+__global__ void paddingKernel(float* C, const float* A, int size, int M, int pM, int N, int padding)
 {
 	int idx = blockDim.x * blockIdx.x + threadIdx.x;
 
 	if (idx < size)
 	{
-		int idxC = (idx / M + padding) * pM + idx % M + padding;
+		int idxC = idx / (N * M) * (2 * padding * pM) + (idx / M + padding) * pM + idx % M + padding;
 
 		C[idxC] = A[idx];
-	}
+	} 
 }
 
 Tensor Tensor::pad(const Tensor& A, int padding)
 {
-	Tensor C = fill({ A.shape[0] + 2 * padding, A.shape[1] + 2 * padding }, 0.0f);
+	if (A.dim() < 2)
+		throw runtime_error("Tensor must be at least 2 dimesnional for padding!");
+
+	if (padding < 0)
+		throw runtime_error("Padding cannot be negative!");
+
+	vector<int> newShape = A.shape;
+
+	newShape[A.dim() - 2] += 2 * padding;
+	newShape[A.dim() - 1] += 2 * padding;
+
+	Tensor C = zeros(newShape);
 
 	int block = 256;
 
 	int grid = (A.total + block - 1) / block;
 
-	paddingKernel << <grid, block >> > (C.data, A.data, A.total, A.shape[1], C.shape[1], padding);
-
+	paddingKernel << <grid, block >> > (C.data, A.data, A.total, A.shape[A.dim() - 1], C.shape[C.dim() - 1], A.shape[A.dim() - 2], padding);
+	
 	return C;
 }
 
