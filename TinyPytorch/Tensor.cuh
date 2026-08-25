@@ -79,6 +79,8 @@ public:
 
 	Tensor& unsqueeze(int dim = 0);
 
+	Tensor& flatten(int start_dim = 0, int end_dim = -1);
+
 	static Tensor pad(const Tensor& A, int padding);
 
 	Tensor operator*(const Tensor& B) const;

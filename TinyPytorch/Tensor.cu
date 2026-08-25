@@ -254,6 +254,43 @@ Tensor& Tensor::unsqueeze(int dim)
 	return *this;
 }
 
+Tensor& Tensor::flatten(int start_dim, int end_dim)
+{
+	if (start_dim<0 || start_dim>=static_cast<int>(shape.size()) || end_dim<-1 || end_dim>static_cast<int>(shape.size())-1)
+		throw runtime_error("Invalid dimension value!");
+
+	if (end_dim != -1 && end_dim < start_dim)
+		throw runtime_error("End dim cannot be smaller than the start dim!");
+
+	int end = end_dim == -1 ? shape.size() - 1 : end_dim;
+
+	int flatten = 1;
+
+	for (int i = start_dim; i <= end; i++)
+	{
+		flatten *= shape[i];
+	}
+
+	vector<int> newShape;
+
+	for (int i = 0; i <start_dim; i++)
+	{
+		newShape.push_back(shape[i]);
+	}
+
+	newShape.push_back(flatten);
+
+	for (int i = end + 1; i < dim(); i++)
+	{
+		newShape.push_back(shape[i]);
+	}
+
+	shape = newShape;
+	stride = calculateStride(newShape);
+
+	return *this;
+}
+
 __global__ void paddingKernel(float* C, const float* A, int size, int M, int pM, int N, int padding)
 {
 	int idx = blockDim.x * blockIdx.x + threadIdx.x;

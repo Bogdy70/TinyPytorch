@@ -796,6 +796,19 @@ int main()
         Tensor T15 = Tensor::pad(T9, 1);
         T15.toCPU().print();
 
+        cout << "\n\nFlatten test\n\n";
+
+        T14.flatten();
+        T14.toCPU().print();
+        cout << "\n(";
+        for (int i = 0; i < T14.dim(); i++)
+        {
+            cout << T14.getShape()[i];
+            if (i != T14.dim() - 1)
+                cout << ", ";
+        }
+        cout << ")";
+
 
         cout << "\n\nCUDA cat dataset test\n\n";
 
