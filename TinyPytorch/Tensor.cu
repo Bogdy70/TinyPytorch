@@ -254,6 +254,31 @@ Tensor& Tensor::unsqueeze(int dim)
 	return *this;
 }
 
+__global__ void paddingKernel(float* C, const float* A, int size, int M, int pM, int padding)
+{
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		int idxC = (idx / M + padding) * pM + idx % M + padding;
+
+		C[idxC] = A[idx];
+	}
+}
+
+Tensor Tensor::pad(const Tensor& A, int padding)
+{
+	Tensor C = fill({ A.shape[0] + 2 * padding, A.shape[1] + 2 * padding }, 0.0f);
+
+	int block = 256;
+
+	int grid = (A.total + block - 1) / block;
+
+	paddingKernel << <grid, block >> > (C.data, A.data, A.total, A.shape[1], C.shape[1], padding);
+
+	return C;
+}
+
 __global__ void mulKernel(float* C, const float* A, const float* B, int size, int subA, int subB, int upperA, int upperB, int strideA, int strideB)
 {
 	int idx = blockDim.x * blockIdx.x + threadIdx.x;

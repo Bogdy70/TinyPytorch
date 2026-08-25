@@ -79,6 +79,8 @@ public:
 
 	Tensor& unsqueeze(int dim = 0);
 
+	static Tensor pad(const Tensor& A, int padding);
+
 	Tensor operator*(const Tensor& B) const;
 
 	Tensor operator/(const Tensor& B) const;
