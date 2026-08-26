@@ -327,6 +327,57 @@ Tensor Tensor::pad(const Tensor& A, int padding)
 	return C;
 }
 
+__global__ void convKernel(float* C, const float* A, const float* K, int size, int channels, int kdim, int hS, int vS, int N, int M, int rN, int rM)
+{
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		float total = 0.0f;
+
+		for (int j = 0; j < channels; j++)
+		{
+			for (int i = 0; i < kdim * kdim; i++)
+			{
+				int idxA = i / kdim * (M - kdim) + i + idx % rM * hS + idx / rM * (vS * M) + idx / (rN * rM) * (channels * N - rN * vS) * M + j * N * M;
+
+				total += A[idxA] * K[i + j * kdim * kdim];
+			}
+		}
+		
+		C[idx] = total;
+	}
+}
+
+Tensor Tensor::conv2D(const Tensor& A, const Tensor& K, int kernel_size, int hStride, int vStride, int padding)
+{
+	//Tensor K = random({ kernel_size, kernel_size });
+
+	vector<int> newShape;
+
+	for (int i = 0; i < A.dim() - 3; i++)
+	{
+		newShape.push_back(A.shape[i]);
+	}
+
+	int rN = (A.shape[A.dim() - 2] + 2 * padding - kernel_size) / vStride + 1;
+	int rM = (A.shape[A.dim() - 1] + 2 * padding - kernel_size) / hStride + 1;
+	int channels = A.shape[A.dim() - 3];
+
+	newShape.push_back(rN);
+	newShape.push_back(rM);
+
+	Tensor C(newShape);
+
+	int block = 256;
+
+	int grid = (C.total + block - 1) / block;
+
+	convKernel << <grid, block >> > (C.data, A.data, K.data, C.total, channels, kernel_size, hStride, vStride, A.shape[A.dim() - 2], A.shape[A.dim() - 1], rN, rM);
+
+	return C;
+}
+
 __global__ void mulKernel(float* C, const float* A, const float* B, int size, int subA, int subB, int upperA, int upperB, int strideA, int strideB)
 {
 	int idx = blockDim.x * blockIdx.x + threadIdx.x;

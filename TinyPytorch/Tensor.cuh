@@ -83,6 +83,8 @@ public:
 
 	static Tensor pad(const Tensor& A, int padding);
 
+	static Tensor conv2D(const Tensor& A, const Tensor& K, int kernel_size = 3, int hStride = 1, int vStride = 1, int padding = 0);
+
 	Tensor operator*(const Tensor& B) const;
 
 	Tensor operator/(const Tensor& B) const;
