@@ -327,7 +327,7 @@ Tensor Tensor::pad(const Tensor& A, int padding)
 	return C;
 }
 
-__global__ void convKernel(float* C, const float* A, const float* K, int size, int channels, int kdim, int hS, int vS, int N, int M, int rN, int rM)
+__global__ void convKernel(float* C, const float* A, const float* K, int size, int channels, int filters, int kdim, int hS, int vS, int N, int M, int rN, int rM)
 {
 	int idx = blockDim.x * blockIdx.x + threadIdx.x;
 
@@ -335,13 +335,19 @@ __global__ void convKernel(float* C, const float* A, const float* K, int size, i
 	{
 		float total = 0.0f;
 
+		//int mod = filters * rN * rM;
+		int k = idx / (rN * rM) % filters;
+		int batch = idx / (filters * rN * rM);
+		int new_idx = idx % (rN * rM) + batch * rN * rM;
+
 		for (int j = 0; j < channels; j++)
 		{
 			for (int i = 0; i < kdim * kdim; i++)
 			{
-				int idxA = i / kdim * (M - kdim) + i + idx % rM * hS + idx / rM * (vS * M) + idx / (rN * rM) * (channels * N - rN * vS) * M + j * N * M;
+				int idxA = i / kdim * (M - kdim) + i + new_idx % rM * hS + new_idx / rM * (vS * M) + new_idx / (rN * rM) * (channels * N - rN * vS) * M + j * N * M;
+				int idxK = i + j * kdim * kdim + k * channels * kdim * kdim;
 
-				total += A[idxA] * K[i + j * kdim * kdim];
+				total += A[idxA] * K[idxK];
 			}
 		}
 		
@@ -351,7 +357,24 @@ __global__ void convKernel(float* C, const float* A, const float* K, int size, i
 
 Tensor Tensor::conv2D(const Tensor& A, const Tensor& K, int kernel_size, int hStride, int vStride, int padding)
 {
+	if (A.dim() < 3)
+		throw runtime_error("Tensor must be at least 3 dimensional for convolution!");
+
+	if (kernel_size < 1)
+		throw runtime_error("Invalid kernel size!");
+
+	if (padding < 0)
+		throw runtime_error("Inavlid padding value!");
+
+	if (hStride < 1)
+		throw runtime_error("Invalid horizontal stride value!");
+
+	if (vStride < 1)
+		throw runtime_error("Invalid vertical stride value!");
+
 	//Tensor K = random({ kernel_size, kernel_size });
+
+	Tensor paddedA = pad(A, padding);
 
 	vector<int> newShape;
 
@@ -363,7 +386,9 @@ Tensor Tensor::conv2D(const Tensor& A, const Tensor& K, int kernel_size, int hSt
 	int rN = (A.shape[A.dim() - 2] + 2 * padding - kernel_size) / vStride + 1;
 	int rM = (A.shape[A.dim() - 1] + 2 * padding - kernel_size) / hStride + 1;
 	int channels = A.shape[A.dim() - 3];
+	int filters = K.shape[0];
 
+	newShape.push_back(filters);
 	newShape.push_back(rN);
 	newShape.push_back(rM);
 
@@ -373,7 +398,7 @@ Tensor Tensor::conv2D(const Tensor& A, const Tensor& K, int kernel_size, int hSt
 
 	int grid = (C.total + block - 1) / block;
 
-	convKernel << <grid, block >> > (C.data, A.data, K.data, C.total, channels, kernel_size, hStride, vStride, A.shape[A.dim() - 2], A.shape[A.dim() - 1], rN, rM);
+	convKernel << <grid, block >> > (C.data, paddedA.data, K.data, C.total, channels, filters, kernel_size, hStride, vStride, paddedA.shape[A.dim() - 2], paddedA.shape[A.dim() - 1], rN, rM);
 
 	return C;
 }
