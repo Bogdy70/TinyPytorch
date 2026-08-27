@@ -81,9 +81,11 @@ public:
 
 	Tensor& flatten(int start_dim = 0, int end_dim = -1);
 
-	static Tensor pad(const Tensor& A, int padding);
+	static Tensor pad(const Tensor& A, int padding, float val = 0.0f);
 
-	static Tensor conv2D(const Tensor& A, const Tensor& K, int kernel_size = 3, int hStride = 1, int vStride = 1, int padding = 0);
+	static Tensor conv2D(const Tensor& A, int out_channels, int kernel_size = 3, int hStride = 1, int vStride = 1, int padding = 0);
+
+	static Tensor maxPool2D(const Tensor& A, int kernel_size = 2, int hStride = 1, int vStride = 1, int padding = 0);
 
 	Tensor operator*(const Tensor& B) const;
 

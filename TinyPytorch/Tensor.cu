@@ -303,7 +303,7 @@ __global__ void paddingKernel(float* C, const float* A, int size, int M, int pM,
 	} 
 }
 
-Tensor Tensor::pad(const Tensor& A, int padding)
+Tensor Tensor::pad(const Tensor& A, int padding, float val)
 {
 	if (A.dim() < 2)
 		throw runtime_error("Tensor must be at least 2 dimesnional for padding!");
@@ -316,7 +316,7 @@ Tensor Tensor::pad(const Tensor& A, int padding)
 	newShape[A.dim() - 2] += 2 * padding;
 	newShape[A.dim() - 1] += 2 * padding;
 
-	Tensor C = zeros(newShape);
+	Tensor C = fill(newShape, val);
 
 	int block = 256;
 
@@ -355,7 +355,7 @@ __global__ void convKernel(float* C, const float* A, const float* K, int size, i
 	}
 }
 
-Tensor Tensor::conv2D(const Tensor& A, const Tensor& K, int kernel_size, int hStride, int vStride, int padding)
+Tensor Tensor::conv2D(const Tensor& A, int out_channels, int kernel_size, int hStride, int vStride, int padding)
 {
 	if (A.dim() < 3)
 		throw runtime_error("Tensor must be at least 3 dimensional for convolution!");
@@ -372,9 +372,13 @@ Tensor Tensor::conv2D(const Tensor& A, const Tensor& K, int kernel_size, int hSt
 	if (vStride < 1)
 		throw runtime_error("Invalid vertical stride value!");
 
-	//Tensor K = random({ kernel_size, kernel_size });
+	if (out_channels < 1)
+		throw runtime_error("Invalid out channels value!");
 
 	Tensor paddedA = pad(A, padding);
+
+	if (kernel_size > paddedA.shape[paddedA.dim() - 2] || kernel_size > paddedA.shape[paddedA.dim() - 1])
+		throw runtime_error("Kernel size too big!");
 
 	vector<int> newShape;
 
@@ -386,6 +390,9 @@ Tensor Tensor::conv2D(const Tensor& A, const Tensor& K, int kernel_size, int hSt
 	int rN = (A.shape[A.dim() - 2] + 2 * padding - kernel_size) / vStride + 1;
 	int rM = (A.shape[A.dim() - 1] + 2 * padding - kernel_size) / hStride + 1;
 	int channels = A.shape[A.dim() - 3];
+
+	CPUTensor::setSeed(42);
+	Tensor K = random({ out_channels, channels, kernel_size, kernel_size });
 	int filters = K.shape[0];
 
 	newShape.push_back(filters);
@@ -400,9 +407,75 @@ Tensor Tensor::conv2D(const Tensor& A, const Tensor& K, int kernel_size, int hSt
 
 	convKernel << <grid, block >> > (C.data, paddedA.data, K.data, C.total, channels, filters, kernel_size, hStride, vStride, paddedA.shape[A.dim() - 2], paddedA.shape[A.dim() - 1], rN, rM);
 
-	Tensor B = fill({ 1, filters, 1, 1 }, 1.0f);
+	Tensor B = fill({ filters, 1, 1 }, 1.0f);
 
 	C = C + B;
+
+	return C;
+}
+
+__global__ void maxPoolKernel(float* C, const float* A, int size, int kdim, int hS, int vS, int rN, int rM, int N, int M)
+{
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		float max_val = A[idx % rM * hS + idx / rM * vS * M + idx / (rN * rM) * (N - vS * rN) * M];
+
+		for (int i = 1; i < kdim * kdim; i++)
+		{
+			int idxA = i / kdim * (M - kdim) + i + idx % rM * hS + idx / rM * vS * M + idx / (rN * rM) * (N - vS * rN) * M;
+
+			if (A[idxA] > max_val)
+				max_val = A[idxA];
+		}
+		
+		C[idx] = max_val;
+	}
+}
+
+Tensor Tensor::maxPool2D(const Tensor& A, int kernel_size, int hStride, int vStride, int padding)
+{
+	if (A.dim() < 3)
+		throw runtime_error("Tensor must be at least 3 dimensional for max pooling!");
+
+	if (kernel_size < 1)
+		throw runtime_error("Invalid kernel size!");
+
+	if (hStride < 1)
+		throw runtime_error("Invalid horizontal stride value!");
+
+	if (vStride < 1)
+		throw runtime_error("Invalid vertical stride value!");
+
+	if (padding < 0)
+		throw runtime_error("Invalid paadding value!");
+
+	Tensor paddedA = pad(A, padding, -numeric_limits<float>::infinity());
+
+	if (kernel_size > paddedA.shape[paddedA.dim() - 2] || kernel_size > paddedA.shape[paddedA.dim() - 1])
+		throw runtime_error("Kernel size too big!");
+
+	vector<int> newShape;
+
+	for (int i = 0; i < A.dim() - 2; i++)
+	{
+		newShape.push_back(A.shape[i]);
+	}
+
+	int rN = (A.shape[A.dim() - 2] + 2 * padding - kernel_size) / vStride + 1;
+	int rM = (A.shape[A.dim() - 1] + 2 * padding - kernel_size) / hStride + 1;
+
+	newShape.push_back(rN);
+	newShape.push_back(rM);
+
+	Tensor C(newShape);
+
+	int block = 256;
+
+	int grid = (C.total + block - 1) / block;
+
+	maxPoolKernel << <grid, block >> > (C.data, paddedA.data, C.total, kernel_size, hStride, vStride, rN, rM, paddedA.shape[paddedA.dim() - 2], paddedA.shape[paddedA.dim() - 1]);
 
 	return C;
 }
