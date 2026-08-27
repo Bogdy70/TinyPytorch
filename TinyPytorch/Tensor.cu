@@ -400,6 +400,10 @@ Tensor Tensor::conv2D(const Tensor& A, const Tensor& K, int kernel_size, int hSt
 
 	convKernel << <grid, block >> > (C.data, paddedA.data, K.data, C.total, channels, filters, kernel_size, hStride, vStride, paddedA.shape[A.dim() - 2], paddedA.shape[A.dim() - 1], rN, rM);
 
+	Tensor B = fill({ 1, filters, 1, 1 }, 1.0f);
+
+	C = C + B;
+
 	return C;
 }
 
