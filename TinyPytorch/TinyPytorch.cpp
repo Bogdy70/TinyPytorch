@@ -41,7 +41,7 @@ struct convStats
     int padding;
 };
 
-struct maxPoolStats
+struct MaxPoolStats
 {
     int kernel_size;
     int hStride;
@@ -217,7 +217,7 @@ Parameters init_params(const vector<int>& dim_list)
     return params;
 }
 
-Parameters init_conv(const vector<convStats>& conv_stats, const vector<maxPoolStats>& pool_stats, const Tensor& X, int output_size)
+Parameters init_conv(const vector<convStats>& conv_stats, const vector<MaxPoolStats>& pool_stats, const Tensor& X, int output_size)
 {
     if (conv_stats.empty())
         throw runtime_error("At least one convolution layer is required!");
@@ -285,7 +285,7 @@ Forward forward_pass(const Parameters& params, const Tensor& X, const string& ac
     return forward_cache;
 }
 
-Forward conv_frdpass(const Parameters& params, const Tensor& X, const vector<convStats>& cv_stats, const vector<maxPoolStats>& mx_stats, const string& activation, float dropout = 0.0f)
+Forward conv_frdpass(const Parameters& params, const Tensor& X, const vector<convStats>& cv_stats, const vector<MaxPoolStats>& mx_stats, const string& activation, float dropout = 0.0f)
 {
     if (dropout < 0.0f || dropout>=1.0f)
         throw runtime_error("Invalid dropout value!");
@@ -950,7 +950,7 @@ int main()
             {16, 32, 3, 1, 1, 0}
         };
 
-        vector<maxPoolStats> pl_stats = {
+        vector<MaxPoolStats> pl_stats = {
             {2, 2, 2, 0},
             {2, 1, 1, 0}
         };
