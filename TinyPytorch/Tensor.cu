@@ -405,27 +405,35 @@ Tensor Tensor::conv2D(const Tensor& A, const Tensor& K, int kernel_size, int hSt
 	return C;
 }
 
-__global__ void maxPoolKernel(float* C, const float* A, int size, int kdim, int hS, int vS, int rN, int rM, int N, int M)
+__global__ void maxPoolKernel(float* C_vals, float* C_idxs, const float* A, int size, int kdim, int hS, int vS, int rN, int rM, int N, int M)
 {
 	int idx = blockDim.x * blockIdx.x + threadIdx.x;
 
 	if (idx < size)
 	{
-		float max_val = A[idx % rM * hS + idx / rM * vS * M + idx / (rN * rM) * (N - vS * rN) * M];
+		int firstIdxA = idx % rM * hS + idx / rM * vS * M + idx / (rN * rM) * (N - vS * rN) * M;
+		
+		float max_val = A[firstIdxA];
+
+		int idx_max = firstIdxA;
 
 		for (int i = 1; i < kdim * kdim; i++)
 		{
 			int idxA = i / kdim * (M - kdim) + i + idx % rM * hS + idx / rM * vS * M + idx / (rN * rM) * (N - vS * rN) * M;
 
 			if (A[idxA] > max_val)
+			{
 				max_val = A[idxA];
+				idx_max = idxA;
+			}	
 		}
 		
-		C[idx] = max_val;
+		C_vals[idx] = max_val;
+		C_idxs[idx] = idx_max;
 	}
 }
 
-Tensor Tensor::maxPool2D(const Tensor& A, int kernel_size, int hStride, int vStride, int padding)
+MaxPoolRes Tensor::maxPool2D(const Tensor& A, int kernel_size, int hStride, int vStride, int padding)
 {
 	if (A.dim() < 3)
 		throw runtime_error("Tensor must be at least 3 dimensional for max pooling!");
@@ -460,15 +468,15 @@ Tensor Tensor::maxPool2D(const Tensor& A, int kernel_size, int hStride, int vStr
 	newShape.push_back(rN);
 	newShape.push_back(rM);
 
-	Tensor C(newShape);
+	MaxPoolRes max_pool(newShape);
 
 	int block = 256;
 
-	int grid = (C.total + block - 1) / block;
+	int grid = (max_pool.vals.total + block - 1) / block;
 
-	maxPoolKernel << <grid, block >> > (C.data, paddedA.data, C.total, kernel_size, hStride, vStride, rN, rM, paddedA.shape[paddedA.dim() - 2], paddedA.shape[paddedA.dim() - 1]);
+	maxPoolKernel << <grid, block >> > (max_pool.vals.data, max_pool.idxs.data, paddedA.data, max_pool.vals.total, kernel_size, hStride, vStride, rN, rM, paddedA.shape[paddedA.dim() - 2], paddedA.shape[paddedA.dim() - 1]);
 
-	return C;
+	return max_pool;
 }
 
 __global__ void mulKernel(float* C, const float* A, const float* B, int size, int subA, int subB, int upperA, int upperB, int strideA, int strideB)

@@ -41,6 +41,14 @@ struct convStats
     int padding;
 };
 
+struct maxPoolStats
+{
+    int kernel_size;
+    int hStride;
+    int vStride;
+    int padding;
+};
+
 struct Parameters
 {
     vector<Tensor> W;
@@ -48,8 +56,6 @@ struct Parameters
 
     Parameters(int dim) : W(dim), B(dim) {}
 };
-
-
 
 float cost(const Tensor& Y, const Tensor& pred, const Parameters& params, const float lambda_l1=0.0f, const float lambda_l2=0.0f)
 {
@@ -110,8 +116,9 @@ struct Forward
     vector<Tensor> Z;
     vector<Tensor> A;
     vector<Tensor> D;
+    vector<Tensor> MPoolIdxs;
 
-    Forward(int dim) : Z(dim), A(dim), D(dim){}
+    Forward(int dim) : Z(dim), A(dim), D(dim), MPoolIdxs(dim) {}
 };
 
 struct Backward
@@ -210,8 +217,17 @@ Parameters init_params(const vector<int>& dim_list)
     return params;
 }
 
-Parameters init_conv(const vector<convStats>& conv_stats, const Tensor& X, int output_size)
+Parameters init_conv(const vector<convStats>& conv_stats, const vector<maxPoolStats>& pool_stats, const Tensor& X, int output_size)
 {
+    if (conv_stats.empty())
+        throw runtime_error("At least one convolution layer is required!");
+
+    if (conv_stats.size() != pool_stats.size())
+        throw runtime_error("Every conv layer must have a maxpool layer!");
+
+    if (output_size < 1)
+        throw runtime_error("Invalid output size!");
+
     int L = size(conv_stats);
 
     Parameters params(L + 2);
@@ -224,9 +240,14 @@ Parameters init_conv(const vector<convStats>& conv_stats, const Tensor& X, int o
         params.W[l] = Tensor::random({ conv_stats[l - 1].out_channels, conv_stats[l - 1].in_channels, conv_stats[l - 1].kernel_size, conv_stats[l - 1].kernel_size }) * sqrt(2.0f / static_cast<float>(conv_stats[l - 1].in_channels * conv_stats[l - 1].kernel_size * conv_stats[l - 1].kernel_size));
         params.B[l] = Tensor::zeros({ conv_stats[l - 1].out_channels, 1, 1 });
 
-        N = (N + 2 * conv_stats[l-1].padding - conv_stats[l-1].kernel_size) / conv_stats[l-1].vStride + 1;
-        M = (M + 2 * conv_stats[l-1].padding - conv_stats[l-1].kernel_size) / conv_stats[l-1].hStride + 1;
+        N = (N + 2 * conv_stats[l - 1].padding - conv_stats[l - 1].kernel_size) / conv_stats[l - 1].vStride + 1;
+        N = (N + 2 * pool_stats[l - 1].padding - pool_stats[l - 1].kernel_size) / pool_stats[l - 1].vStride + 1;
+        M = (M + 2 * conv_stats[l - 1].padding - conv_stats[l - 1].kernel_size) / conv_stats[l - 1].hStride + 1;
+        M = (M + 2 * pool_stats[l - 1].padding - pool_stats[l - 1].kernel_size) / pool_stats[l - 1].hStride + 1;
     }
+
+    if (N <= 0 || M <= 0)
+        throw runtime_error("Invalid final shape!");
 
     int flat_shape = params.W[L].getShape()[0] * N * M;
     params.W[L + 1] = Tensor::random({ output_size, flat_shape }) * sqrt(2.0f / static_cast<float>(flat_shape));
@@ -264,7 +285,7 @@ Forward forward_pass(const Parameters& params, const Tensor& X, const string& ac
     return forward_cache;
 }
 
-Forward conv_frdpass(const Parameters& params, const Tensor& X, const vector<convStats>& cv_stats, const string& activation, float dropout = 0.0f)
+Forward conv_frdpass(const Parameters& params, const Tensor& X, const vector<convStats>& cv_stats, const vector<maxPoolStats>& mx_stats, const string& activation, float dropout = 0.0f)
 {
     if (dropout < 0.0f || dropout>=1.0f)
         throw runtime_error("Invalid dropout value!");
@@ -281,7 +302,9 @@ Forward conv_frdpass(const Parameters& params, const Tensor& X, const vector<con
     {
         frd_cache.Z[l] = Tensor::conv2D(frd_cache.A[l - 1], params.W[l], cv_stats[l - 1].kernel_size, cv_stats[l - 1].hStride, cv_stats[l - 1].vStride, cv_stats[l - 1].padding) + params.B[l];
         frd_cache.A[l] = activ.forward(frd_cache.Z[l]);
-        frd_cache.A[l] = Tensor::maxPool2D(frd_cache.A[l]);
+        MaxPoolRes max_pool = Tensor::maxPool2D(frd_cache.A[l], mx_stats[l - 1].kernel_size, mx_stats[l - 1].hStride, mx_stats[l - 1].vStride, mx_stats[l - 1].padding);
+        frd_cache.A[l] = move(max_pool.vals);
+        frd_cache.MPoolIdxs[l] = move(max_pool.idxs);
 
         if (dropout > 0.0f)
         {
@@ -907,15 +930,15 @@ int main()
 
         cout << "\n\nMax pool 2D test\n\n";
 
-        Tensor T18 = Tensor::maxPool2D(T16, 2, 2, 2, 1);
+        MaxPoolRes mx_pl = Tensor::maxPool2D(T16, 2, 2, 2, 1);
         T16.toCPU().print();
         cout << "\n";
-        T18.toCPU().print();
+        mx_pl.vals.toCPU().print();
         cout << "\n(";
-        for (int i = 0; i < T18.dim(); i++)
+        for (int i = 0; i < mx_pl.vals.dim(); i++)
         {
-            cout << T18.getShape()[i];
-            if (i != T18.dim() - 1)
+            cout << mx_pl.vals.getShape()[i];
+            if (i != mx_pl.vals.dim() - 1)
                 cout << ", ";
         }
         cout << ")";
@@ -927,10 +950,15 @@ int main()
             {16, 32, 3, 1, 1, 0}
         };
 
+        vector<maxPoolStats> pl_stats = {
+            {2, 2, 2, 0},
+            {2, 1, 1, 0}
+        };
+
         Tensor TX = Tensor::random({ 5000, 3, 28, 28 });
         Tensor TY = Tensor::random({ 5000, 10 });
 
-        Parameters conv_params = init_conv(cv_stats, TX, TY.getShape()[1]);
+        Parameters conv_params = init_conv(cv_stats, pl_stats, TX, TY.getShape()[1]);
 
         conv_params.W[1].toCPU().print_dims();
 

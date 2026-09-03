@@ -7,6 +7,8 @@ using namespace std;
 
 class CPUTensor;
 
+struct MaxPoolRes;
+
 struct MaxStats
 {
 	float value;
@@ -85,7 +87,7 @@ public:
 
 	static Tensor conv2D(const Tensor& A, const Tensor& K, int kernel_size = 3, int hStride = 1, int vStride = 1, int padding = 0);
 
-	static Tensor maxPool2D(const Tensor& A, int kernel_size = 2, int hStride = 1, int vStride = 1, int padding = 0);
+	static MaxPoolRes maxPool2D(const Tensor& A, int kernel_size = 2, int hStride = 1, int vStride = 1, int padding = 0);
 
 	Tensor operator*(const Tensor& B) const;
 
@@ -149,3 +151,11 @@ Tensor operator+(float x, const Tensor& A);
 Tensor operator/(float x, const Tensor& A);
 
 Tensor operator-(float x, const Tensor& A);
+
+struct MaxPoolRes
+{
+	Tensor vals;
+	Tensor idxs;
+
+	MaxPoolRes(vector<int>& shape): vals(shape), idxs(shape) {}
+};
