@@ -147,6 +147,18 @@ void CPUTensor::print() const
 	cout << "\n";
 }
 
+void CPUTensor::print_dims() const
+{
+	cout << "\n(";
+	for (int i = 0; i < dim(); i++)
+	{
+		cout << shape[i];
+		if (i != dim() - 1)
+			cout << ", ";
+	}
+	cout << ")";
+}
+
 void CPUTensor::setSeed(int seed)
 {
 	gen.seed(seed);

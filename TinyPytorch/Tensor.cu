@@ -355,7 +355,7 @@ __global__ void convKernel(float* C, const float* A, const float* K, int size, i
 	}
 }
 
-Tensor Tensor::conv2D(const Tensor& A, int out_channels, int kernel_size, int hStride, int vStride, int padding)
+Tensor Tensor::conv2D(const Tensor& A, const Tensor& K, int kernel_size, int hStride, int vStride, int padding)
 {
 	if (A.dim() < 3)
 		throw runtime_error("Tensor must be at least 3 dimensional for convolution!");
@@ -371,9 +371,6 @@ Tensor Tensor::conv2D(const Tensor& A, int out_channels, int kernel_size, int hS
 
 	if (vStride < 1)
 		throw runtime_error("Invalid vertical stride value!");
-
-	if (out_channels < 1)
-		throw runtime_error("Invalid out channels value!");
 
 	Tensor paddedA = pad(A, padding);
 
@@ -391,8 +388,6 @@ Tensor Tensor::conv2D(const Tensor& A, int out_channels, int kernel_size, int hS
 	int rM = (A.shape[A.dim() - 1] + 2 * padding - kernel_size) / hStride + 1;
 	int channels = A.shape[A.dim() - 3];
 
-	CPUTensor::setSeed(42);
-	Tensor K = random({ out_channels, channels, kernel_size, kernel_size });
 	int filters = K.shape[0];
 
 	newShape.push_back(filters);
@@ -406,10 +401,6 @@ Tensor Tensor::conv2D(const Tensor& A, int out_channels, int kernel_size, int hS
 	int grid = (C.total + block - 1) / block;
 
 	convKernel << <grid, block >> > (C.data, paddedA.data, K.data, C.total, channels, filters, kernel_size, hStride, vStride, paddedA.shape[A.dim() - 2], paddedA.shape[A.dim() - 1], rN, rM);
-
-	Tensor B = fill({ filters, 1, 1 }, 1.0f);
-
-	C = C + B;
 
 	return C;
 }

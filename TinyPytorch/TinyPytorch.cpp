@@ -31,6 +31,16 @@ Tensor sign(const Tensor& A)
     return (A > 0.0f) - (A < 0.0f);
 }
 
+struct convStats
+{
+    int in_channels;
+    int out_channels;
+    int kernel_size;
+    int hStride;
+    int vStride;
+    int padding;
+};
+
 struct Parameters
 {
     vector<Tensor> W;
@@ -38,6 +48,8 @@ struct Parameters
 
     Parameters(int dim) : W(dim), B(dim) {}
 };
+
+
 
 float cost(const Tensor& Y, const Tensor& pred, const Parameters& params, const float lambda_l1=0.0f, const float lambda_l2=0.0f)
 {
@@ -198,6 +210,31 @@ Parameters init_params(const vector<int>& dim_list)
     return params;
 }
 
+Parameters init_conv(const vector<convStats>& conv_stats, const Tensor& X, int output_size)
+{
+    int L = size(conv_stats);
+
+    Parameters params(L + 2);
+
+    int N = X.getShape()[X.dim() - 2];
+    int M = X.getShape()[X.dim() - 1];
+
+    for (int l = 1; l <= L; l++)
+    {
+        params.W[l] = Tensor::random({ conv_stats[l - 1].out_channels, conv_stats[l - 1].in_channels, conv_stats[l - 1].kernel_size, conv_stats[l - 1].kernel_size }) * sqrt(2.0f / static_cast<float>(conv_stats[l - 1].in_channels * conv_stats[l - 1].kernel_size * conv_stats[l - 1].kernel_size));
+        params.B[l] = Tensor::zeros({ conv_stats[l - 1].out_channels, 1, 1 });
+
+        N = (N + 2 * conv_stats[l-1].padding - conv_stats[l-1].kernel_size) / conv_stats[l-1].vStride + 1;
+        M = (M + 2 * conv_stats[l-1].padding - conv_stats[l-1].kernel_size) / conv_stats[l-1].hStride + 1;
+    }
+
+    int flat_shape = params.W[L].getShape()[0] * N * M;
+    params.W[L + 1] = Tensor::random({ output_size, flat_shape }) * sqrt(2.0f / static_cast<float>(flat_shape));
+    params.B[L + 1] = Tensor::zeros({ output_size, 1 });
+
+    return params;
+}
+
 Forward forward_pass(const Parameters& params, const Tensor& X, const string& activation, const float dropout=0.0f)
 {
     if (dropout < 0.0f || dropout >= 1.0f)
@@ -225,6 +262,40 @@ Forward forward_pass(const Parameters& params, const Tensor& X, const string& ac
     forward_cache.A[L - 1] = final_activ(forward_cache.Z[L - 1]);
 
     return forward_cache;
+}
+
+Forward conv_frdpass(const Parameters& params, const Tensor& X, const vector<convStats>& cv_stats, const string& activation, float dropout = 0.0f)
+{
+    if (dropout < 0.0f || dropout>=1.0f)
+        throw runtime_error("Invalid dropout value!");
+
+    int L = size(params.W);
+
+    Forward frd_cache(L);
+    Activation activ(activation);
+    Tensor(*final_activ)(const Tensor&);
+
+    frd_cache.A[0] = X.clone();
+
+    for (int l = 1; l < L-1; l++)
+    {
+        frd_cache.Z[l] = Tensor::conv2D(frd_cache.A[l - 1], params.W[l], cv_stats[l - 1].kernel_size, cv_stats[l - 1].hStride, cv_stats[l - 1].vStride, cv_stats[l - 1].padding) + params.B[l];
+        frd_cache.A[l] = activ.forward(frd_cache.Z[l]);
+        frd_cache.A[l] = Tensor::maxPool2D(frd_cache.A[l]);
+
+        if (dropout > 0.0f)
+        {
+            frd_cache.D[l] = Tensor::randomUniform(frd_cache.A[l].getShape(), 0.0f, 1.0f) < (1.0f - dropout);
+            frd_cache.A[l] = frd_cache.A[l] * frd_cache.D[l] / (1.0f - dropout);
+        }
+    }
+
+    Tensor flat_A = frd_cache.A[L - 2].clone().flatten(1).T();
+    frd_cache.Z[L - 1] = params.W[L - 1].matmul(flat_A) + params.B[L - 1];
+    final_activ = frd_cache.Z[L - 1].getShape()[0] > 1 ? softmax : sigmoid;
+    frd_cache.A[L - 1] = final_activ(frd_cache.Z[L - 1]);
+
+    return frd_cache;
 }
 
 Backward backpropagation(const Forward& frd_cache, const Parameters& params, const Tensor& Y, const string& activation, const float dropout=0.0f, const float lambda_l1=0.0f, const float lambda_l2=0.0f)
@@ -819,7 +890,7 @@ int main()
         CPUTensor::setSeed(42);
         Tensor K = Tensor::random({ 3, 3, 3, 3 });
 
-        Tensor T17 = Tensor::conv2D(T16, 3, 3, 2, 1, 1);
+        Tensor T17 = Tensor::conv2D(T16, K, 3, 2, 1, 1);
         T16.toCPU().print();
         cout << "\n";
         K.toCPU().print();
@@ -848,6 +919,30 @@ int main()
                 cout << ", ";
         }
         cout << ")";
+
+        cout << "\n\nConv init params test\n";
+
+        vector<convStats> cv_stats = {
+            {3, 16, 3, 1, 1, 0},
+            {16, 32, 3, 1, 1, 0}
+        };
+
+        Tensor TX = Tensor::random({ 5000, 3, 28, 28 });
+        Tensor TY = Tensor::random({ 5000, 10 });
+
+        Parameters conv_params = init_conv(cv_stats, TX, TY.getShape()[1]);
+
+        conv_params.W[1].toCPU().print_dims();
+
+        conv_params.W[2].toCPU().print_dims();
+
+        conv_params.B[1].toCPU().print_dims();
+
+        conv_params.B[2].toCPU().print_dims();
+
+        conv_params.W[3].toCPU().print_dims();
+
+        conv_params.B[3].toCPU().print_dims();
 
 
         cout << "\n\nCUDA cat dataset test\n\n";

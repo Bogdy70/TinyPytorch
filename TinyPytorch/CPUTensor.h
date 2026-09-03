@@ -45,6 +45,8 @@ public:
 
 	void print() const;
 
+	void print_dims() const;
+
 	static void setSeed(int seed);
 
 	static CPUTensor random(const vector<int>& shape);
