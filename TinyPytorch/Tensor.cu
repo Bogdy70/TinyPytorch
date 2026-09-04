@@ -131,6 +131,16 @@ Tensor& Tensor::operator=(const vector<float>& X)
 	return *this;
 }
 
+Tensor& Tensor::operator=(const vector<int32_t>& X)
+{
+	if (X.size() != total)
+		throw runtime_error("Sizes do not match!");
+
+	cudaMemcpy(data, X.data(), total * sizeof(int32_t), cudaMemcpyHostToDevice);
+
+	return *this;
+}
+
 int Tensor::size() const
 {
 	return total;
@@ -151,12 +161,27 @@ const vector<int>& Tensor::getStride() const
 	return stride;
 }
 
+DataType Tensor::getDataType() const
+{
+	return dtype;
+}
+
 CPUTensor Tensor::toCPU() const
 {
-	CPUTensor T(shape);
+	CPUTensor T(shape, dtype);
 
-	cudaMemcpy(T.rawData(), data, total * sizeof(float), cudaMemcpyDeviceToHost);
-
+	switch (dtype)
+	{
+	case DataType::float32:
+		cudaMemcpy(T.getFloatData(), getFloatData(), byteSize(), cudaMemcpyDeviceToHost);
+		break;
+	case DataType::int32:
+		cudaMemcpy(T.getIntData(), getIntData(), byteSize(), cudaMemcpyDeviceToHost);
+		break;
+	default:
+		throw runtime_error("Invalid data type!");
+	}
+	
 	return T;
 }
 

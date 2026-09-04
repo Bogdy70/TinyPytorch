@@ -15,6 +15,7 @@
     <ClInclude Include="CPUTensor.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Common.h" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="data\cat\cat_shapes.txt">

@@ -1,4 +1,5 @@
 #include "CPUTensor.h";
+#include "Tensor.cuh"
 #include <stdexcept>
 #include <iostream>
 #include <random>
@@ -7,7 +8,7 @@
 static random_device rd;
 static mt19937 gen(rd());
 
-CPUTensor::CPUTensor(): data(), shape(), stride(), total(0) {}
+CPUTensor::CPUTensor(): data(), shape(), stride(), total(0), dtype(DataType::float32) {}
 
 int CPUTensor::calculateTotal(const vector<int>& shape)
 {
@@ -37,13 +38,14 @@ vector<int> CPUTensor::calculateStride(const vector<int>& shape)
 	return res;
 }
 
-void CPUTensor::recursivePrint(int dim, int offset, int indent) const
+template<typename T>
+void CPUTensor::recursivePrint(const vector<T>& vals, int dim, int offset, int indent) const
 {
 	int rank = static_cast<int>(shape.size());
 
 	if (rank == 0)
 	{
-		cout << data[0];
+		cout << vals[0];
 		return;
 	}
 
@@ -52,7 +54,7 @@ void CPUTensor::recursivePrint(int dim, int offset, int indent) const
 		cout << "[";
 		for (int i = 0; i < shape[dim]; i++)
 		{
-			cout << data[offset + i * stride[dim]];
+			cout << vals[offset + i * stride[dim]];
 
 			if (i != shape[dim] - 1)
 				cout << ", ";
@@ -72,42 +74,73 @@ void CPUTensor::recursivePrint(int dim, int offset, int indent) const
 			cout << string(indent + 1, ' ');
 		}
 
-		recursivePrint(dim + 1, new_offset, indent + 1);
+		recursivePrint(vals, dim + 1, new_offset, indent + 1);
 	}
 	cout << "]";
 }
 
-CPUTensor::CPUTensor(const vector<int>& shape) : data(), shape(shape), stride(calculateStride(shape)), total(0)
+CPUTensor::CPUTensor(const vector<int>& shape, DataType dtype) : data(), shape(shape), stride(calculateStride(shape)), total(0), dtype(dtype)
 {
 	total = calculateTotal(shape);
-	data.resize(total);
+	switch (dtype)
+	{
+	case DataType::float32:
+		data.f = vector<float>(total);
+		break;
+	case DataType::int32:
+		data.i = vector<int32_t>(total);
+		break;
+	default:
+		throw runtime_error("Invalid data type!");
+	}
 }
 
 float& CPUTensor::operator()(int index)
 {
-	return data[index];
+	return data.f[index];
 }
 
 const float& CPUTensor::operator()(int index) const
 {
-	return data[index];
+	return data.f[index];
 }
 
-float* CPUTensor::rawData()
+float* CPUTensor::getFloatData()
 {
-	return data.data();
+	if (dtype != DataType::float32)
+		throw runtime_error("Data type must be float!");
+
+	return data.f.data();
 }
 
-const float* CPUTensor::rawData() const
+const float* CPUTensor::getFloatData() const
 {
-	return data.data();
+	if (dtype != DataType::float32)
+		throw runtime_error("Data type must be float!");
+
+	return data.f.data();
+}
+
+int* CPUTensor::getIntData()
+{
+	if (dtype != DataType::int32)
+		throw runtime_error("Data type must be int!");
+
+	return data.i.data();
+}
+const int* CPUTensor::getIntData() const
+{
+	if (dtype != DataType::int32)
+		throw runtime_error("Data type must be int!");
+
+	return data.i.data();
 }
 
 CPUTensor& CPUTensor::operator=(const vector<float>& X)
 {
 	if (X.size() != total)
 		throw runtime_error("Sizes dont match!");
-	data = X;
+	data.f = X;
 
 	return *this;
 }
@@ -132,18 +165,44 @@ const vector<int>& CPUTensor::getStride() const
 	return stride;
 }
 
+DataType CPUTensor::getDataType() const
+{
+	return dtype;
+}
+
 Tensor CPUTensor::toCUDA() const
 {
-	Tensor T(shape);
+	Tensor T(shape, dtype);
 
-	cudaMemcpy(T.getFloatData(), data.data(), total * sizeof(float), cudaMemcpyHostToDevice);
+	switch (dtype)
+	{
+	case DataType::float32:
+		cudaMemcpy(T.getFloatData(), getFloatData(), T.byteSize(), cudaMemcpyHostToDevice);
+		break;
+	case DataType::int32:
+		cudaMemcpy(T.getIntData(), getIntData(), T.byteSize(), cudaMemcpyHostToDevice);
+		break;
+	default:
+		throw runtime_error("Invalid data type!");
+	}
 
 	return T;
 }
 
 void CPUTensor::print() const
 {
-	recursivePrint(0, 0, 0);
+	switch (dtype)
+	{
+	case DataType::float32:
+		recursivePrint(data.f, 0, 0, 0);
+		break;
+	case DataType::int32:
+		recursivePrint(data.i, 0, 0, 0);
+		break;
+	default:
+		throw runtime_error("invalid data type!");
+	}
+
 	cout << "\n";
 }
 
@@ -204,7 +263,7 @@ void CPUTensor::recursMapping(vector<int>& I, const vector<int>& shape, const ve
 	}
 }
 
-CPUTensor CPUTensor::theMax(const CPUTensor& A, int axis)
+/*CPUTensor CPUTensor::theMax(const CPUTensor& A, int axis)
 {
 	vector<int> newShape = A.shape;
 	vector<int> newStride = A.stride;
@@ -236,7 +295,7 @@ CPUTensor CPUTensor::theMax(const CPUTensor& A, int axis)
 	}
 
 	return C;
-}
+}*/
 
 CPUTensor CPUTensor::loadMatrixBin(const string& filepath, int rows, int cols)
 {
@@ -250,7 +309,7 @@ CPUTensor CPUTensor::loadMatrixBin(const string& filepath, int rows, int cols)
 	}
 
 	file.read(
-		reinterpret_cast<char*>(mat.data.data()),
+		reinterpret_cast<char*>(mat.data.f.data()),
 		rows * cols * sizeof(float)
 	);
 

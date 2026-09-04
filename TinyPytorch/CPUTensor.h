@@ -1,35 +1,47 @@
 #pragma once
 
 #include <vector>
-#include "Tensor.cuh"
+#include "Common.h"
 #include <string>
 
 using namespace std;
 
+struct CPUStorage
+{
+	vector<float> f;
+	vector<int32_t> i;
+};
+
 class CPUTensor
 {
 private:
-	vector<float> data;
+	CPUStorage data;
 	vector<int> shape;
 	vector<int> stride;
-	int total;
+	int total = 0;
+	DataType dtype = DataType::float32;
 
 	static int calculateTotal(const vector<int>& shape);
 	static vector<int> calculateStride(const vector<int>& shape);
-	void recursivePrint(int dim, int offset, int indent) const;
+	template<typename T>
+	void recursivePrint(const vector<T>& vals, int dim, int offset, int indent) const;
 
 public:
 	CPUTensor();
 
-	CPUTensor(const vector<int>& shape);
+	CPUTensor(const vector<int>& shape, DataType dtype = DataType::float32);
 
 	float& operator()(int index);
 
 	const float& operator()(int index) const;
 
-	float* rawData();
+	float* getFloatData();
 
-	const float* rawData() const;
+	const float* getFloatData() const;
+
+	int* getIntData();
+
+	const int* getIntData() const;
 
 	CPUTensor& operator=(const vector<float>& X);
 
@@ -40,6 +52,8 @@ public:
 	const vector<int>& getShape() const;
 
 	const vector<int>& getStride() const;
+
+	DataType getDataType() const;
 
 	Tensor toCUDA() const;
 
@@ -55,7 +69,7 @@ public:
 
 	static void recursMapping(vector<int>& I, const vector<int>& shape, const vector<int>& stride, int idx, int dim);
 
-	static CPUTensor theMax(const CPUTensor& A, int axis);
+	//static CPUTensor theMax(const CPUTensor& A, int axis);
 
 	static CPUTensor loadMatrixBin(const std::string& filepath, int rows, int cols);
 };

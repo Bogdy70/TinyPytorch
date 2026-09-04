@@ -2,6 +2,8 @@
 
 #include <cuda_runtime.h>
 #include <vector>
+#include "Common.h"
+#include <variant>
 
 using namespace std;
 
@@ -25,11 +27,6 @@ struct BroadcastStats
 	int strideB[MAX_TENSOR_LENGTH]{};
 };
 
-enum class DataType
-{
-	float32,
-	int32
-};
 
 class Tensor
 {
@@ -43,9 +40,10 @@ private:
 	static int calculateTotal(const vector<int>& shape);
 	static vector<int> calculateStride(const vector<int>& shape);
 	static size_t calcDataSize(DataType dtype);
-	size_t byteSize() const;
 
 public:
+	size_t byteSize() const;
+
 	Tensor();
 
 	Tensor(const vector<int>& shape, DataType dtype = DataType::float32);
@@ -68,6 +66,8 @@ public:
 
 	Tensor& operator=(const std::vector<float>& X);
 
+	Tensor& operator=(const std::vector<int32_t>& X);
+
 	int size() const;
 
 	int dim() const;
@@ -75,6 +75,8 @@ public:
 	const vector<int>& getShape() const;
 
 	const vector<int>& getStride() const;
+
+	DataType getDataType() const;
 
 	CPUTensor toCPU() const;
 
