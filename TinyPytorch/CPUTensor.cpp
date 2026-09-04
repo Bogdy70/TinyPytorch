@@ -136,7 +136,7 @@ Tensor CPUTensor::toCUDA() const
 {
 	Tensor T(shape);
 
-	cudaMemcpy(T.rawData(), data.data(), total * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(T.getFloatData(), data.data(), total * sizeof(float), cudaMemcpyHostToDevice);
 
 	return T;
 }

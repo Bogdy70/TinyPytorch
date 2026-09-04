@@ -2,7 +2,7 @@
 #include "CPUTensor.h"
 #include <stdexcept>
 
-Tensor::Tensor(): data(nullptr), shape(), stride(), total(0) {}
+Tensor::Tensor(): data(nullptr), shape(), stride(), total(0), dtype(DataType::float32) {}
 
 int Tensor::calculateTotal(const vector<int>& shape)
 {
@@ -30,9 +30,25 @@ vector<int> Tensor::calculateStride(const vector<int>& shape)
 	return res;
 }
 
-Tensor::Tensor(const vector<int>& shape): data(nullptr), shape(shape), stride(calculateStride(shape)), total(calculateTotal(shape))
+size_t Tensor::calcDataSize(DataType dtype)
 {
-	cudaMalloc(&data, total * sizeof(float));
+	switch (dtype)
+	{
+	case DataType::float32: return sizeof(float);
+	case DataType::int32: return sizeof(int32_t);
+	}
+
+	throw runtime_error("Invalid data type!");
+}
+
+size_t Tensor::byteSize() const
+{
+	return total * calcDataSize(dtype);
+}
+
+Tensor::Tensor(const vector<int>& shape, DataType dtype): data(nullptr), shape(shape), stride(calculateStride(shape)), total(calculateTotal(shape)), dtype(dtype)
+{
+	cudaMalloc(&data, byteSize());
 }
 
 Tensor::~Tensor()
@@ -41,12 +57,13 @@ Tensor::~Tensor()
 		cudaFree(data);
 }
 
-Tensor::Tensor(Tensor&& other) noexcept: data(other.data), shape(move(other.shape)), stride(move(other.stride)), total(other.total)
+Tensor::Tensor(Tensor&& other) noexcept: data(other.data), shape(move(other.shape)), stride(move(other.stride)), total(other.total), dtype(other.dtype)
 {
 	other.data = nullptr;
 	other.shape = {};
 	other.stride = {};
 	other.total = 0;
+	other.dtype = DataType::float32;
 }
 
 Tensor& Tensor::operator=(Tensor&& other) noexcept
@@ -60,24 +77,48 @@ Tensor& Tensor::operator=(Tensor&& other) noexcept
 		shape = move(other.shape);
 		stride = move(other.stride);
 		total = other.total;
+		dtype = other.dtype;
 
 		other.data = nullptr;
 		other.shape = {};
 		other.stride = {};
 		other.total = 0;
+		other.dtype = DataType::float32;
 	}
 
 	return *this;
 }
 
-float* Tensor::rawData()
+float* Tensor::getFloatData()
 {
-	return data;
+	if (dtype != DataType::float32)
+		throw runtime_error("Data type must be float!");
+
+	return static_cast<float*>(data);
 }
 
-const float* Tensor::rawData() const
+const float* Tensor::getFloatData() const
 {
-	return data;
+	if (dtype != DataType::float32)
+		throw runtime_error("Data type must be float!");
+
+	return static_cast<const float*>(data);
+}
+
+int32_t* Tensor::getIntData()
+{
+	if (dtype != DataType::int32)
+		throw runtime_error("Data type must be int!");
+
+	return static_cast<int32_t*>(data);
+}
+
+const int32_t* Tensor::getIntData() const
+{
+	if (dtype != DataType::int32)
+		throw runtime_error("Data type must be int!");
+
+	return static_cast<const int32_t*>(data);
 }
 
 Tensor& Tensor::operator=(const vector<float>& X)
@@ -119,10 +160,10 @@ CPUTensor Tensor::toCPU() const
 	return T;
 }
 
-Tensor Tensor::zeros(const vector<int>& shape)
+Tensor Tensor::zeros(const vector<int>& shape, DataType dtype)
 {
-	Tensor T(shape);
-	cudaMemset(T.data, 0, T.size() * sizeof(float));
+	Tensor T(shape, dtype);
+	cudaMemset(T.data, 0, T.total * calcDataSize(dtype));
 	return T;
 }
 
@@ -136,7 +177,7 @@ Tensor Tensor::randomUniform(const vector<int>& shape, float start, float end)
 	return CPUTensor::randomUniform(shape, start, end).toCUDA();
 }
 
-__global__ void fillKernel(float* T, int size, float value)
+__global__ void floatFillKernel(float* T, int size, float value)
 {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -146,14 +187,29 @@ __global__ void fillKernel(float* T, int size, float value)
 	}
 }
 
-Tensor Tensor::fill(const vector<int>& shape, float value)
+__global__ void intFillKernel(int32_t* T, int size, int32_t value)
 {
-	Tensor T(shape);
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		T[idx] = value;
+	}
+}
+
+Tensor Tensor::fill(const vector<int>& shape, float value, DataType dtype)
+{
+	Tensor T(shape, dtype);
 
 	int block = 256;
 	int grid = (T.size() + block - 1) / block;
 
-	fillKernel << <grid, block >> > (T.rawData(), T.size(), value);
+	if (dtype == DataType::float32)
+		floatFillKernel << <grid, block >> > (T.getFloatData(), T.size(), value);
+	else if (dtype == DataType::int32)
+		intFillKernel << <grid, block >> > (T.getIntData(), T.total, static_cast<int32_t>(value));
+	else
+		throw runtime_error("Invalid data type!");
 
 	return T;
 }
@@ -181,13 +237,16 @@ __global__ void resizeKernel(float* X, float* A, int size)
 
 Tensor& Tensor::resize(const vector<int>& shape)
 {
-	Tensor X = zeros(shape);
+	if (dtype != DataType::float32)
+		throw runtime_error("Data type must be float!");
+
+	Tensor X = zeros(shape, dtype);
 
 	int block = 256;
 	
 	int copySize = (total <= X.total) ? total : X.total;
 	int grid = (copySize + block - 1) / block;
-	resizeKernel << <grid, block >> > (X.rawData(), data, copySize);
+	resizeKernel << <grid, block >> > (X.getFloatData(), getFloatData(), copySize);
 
 	*this = move(X);
 
@@ -305,6 +364,9 @@ __global__ void paddingKernel(float* C, const float* A, int size, int M, int pM,
 
 Tensor Tensor::pad(const Tensor& A, int padding, float val)
 {
+	if (A.dtype != DataType::float32)
+		throw runtime_error("Data type must be float!");
+
 	if (A.dim() < 2)
 		throw runtime_error("Tensor must be at least 2 dimesnional for padding!");
 
@@ -322,7 +384,7 @@ Tensor Tensor::pad(const Tensor& A, int padding, float val)
 
 	int grid = (A.total + block - 1) / block;
 
-	paddingKernel << <grid, block >> > (C.data, A.data, A.total, A.shape[A.dim() - 1], C.shape[C.dim() - 1], A.shape[A.dim() - 2], padding);
+	paddingKernel << <grid, block >> > (C.getFloatData(), A.getFloatData(), A.total, A.shape[A.dim() - 1], C.shape[C.dim() - 1], A.shape[A.dim() - 2], padding);
 	
 	return C;
 }
@@ -357,6 +419,9 @@ __global__ void convKernel(float* C, const float* A, const float* K, int size, i
 
 Tensor Tensor::conv2D(const Tensor& A, const Tensor& K, int kernel_size, int hStride, int vStride, int padding)
 {
+	if (A.dtype != DataType::float32)
+		throw runtime_error("Data type must be float!");
+
 	if (A.dim() < 3)
 		throw runtime_error("Tensor must be at least 3 dimensional for convolution!");
 
@@ -400,12 +465,12 @@ Tensor Tensor::conv2D(const Tensor& A, const Tensor& K, int kernel_size, int hSt
 
 	int grid = (C.total + block - 1) / block;
 
-	convKernel << <grid, block >> > (C.data, paddedA.data, K.data, C.total, channels, filters, kernel_size, hStride, vStride, paddedA.shape[A.dim() - 2], paddedA.shape[A.dim() - 1], rN, rM);
+	convKernel << <grid, block >> > (C.getFloatData(), paddedA.getFloatData(), K.getFloatData(), C.total, channels, filters, kernel_size, hStride, vStride, paddedA.shape[A.dim() - 2], paddedA.shape[A.dim() - 1], rN, rM);
 
 	return C;
 }
 
-__global__ void maxPoolKernel(float* C_vals, float* C_idxs, const float* A, int size, int kdim, int hS, int vS, int rN, int rM, int N, int M)
+__global__ void maxPoolKernel(float* C_vals, int32_t* C_idxs, const float* A, int size, int kdim, int hS, int vS, int rN, int rM, int N, int M)
 {
 	int idx = blockDim.x * blockIdx.x + threadIdx.x;
 
@@ -435,6 +500,9 @@ __global__ void maxPoolKernel(float* C_vals, float* C_idxs, const float* A, int 
 
 MaxPoolRes Tensor::maxPool2D(const Tensor& A, int kernel_size, int hStride, int vStride, int padding)
 {
+	if (A.dtype != DataType::float32)
+		throw runtime_error("Data type must be float!");
+
 	if (A.dim() < 3)
 		throw runtime_error("Tensor must be at least 3 dimensional for max pooling!");
 
@@ -474,7 +542,7 @@ MaxPoolRes Tensor::maxPool2D(const Tensor& A, int kernel_size, int hStride, int 
 
 	int grid = (max_pool.vals.total + block - 1) / block;
 
-	maxPoolKernel << <grid, block >> > (max_pool.vals.data, max_pool.idxs.data, paddedA.data, max_pool.vals.total, kernel_size, hStride, vStride, rN, rM, paddedA.shape[paddedA.dim() - 2], paddedA.shape[paddedA.dim() - 1]);
+	maxPoolKernel << <grid, block >> > (max_pool.vals.getFloatData(), max_pool.idxs.getIntData(), paddedA.getFloatData(), max_pool.vals.total, kernel_size, hStride, vStride, rN, rM, paddedA.shape[paddedA.dim() - 2], paddedA.shape[paddedA.dim() - 1]);
 
 	return max_pool;
 }
@@ -516,6 +584,9 @@ __global__ void universalMulKernel(float* C, const float* A, const float* B, int
 
 Tensor Tensor::operator*(const Tensor& B) const
 {
+	if (dtype != DataType::float32)
+		throw runtime_error("Data type must be float!");
+
 	vector<int> newShape = dim() >= B.dim() ? shape : B.shape;
 
 	if (newShape.size() > MAX_TENSOR_LENGTH)
@@ -592,7 +663,7 @@ Tensor Tensor::operator*(const Tensor& B) const
 
 			if (axisA == -1 && axisB == -1)
 			{
-				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+				mulKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, -1, -1, -1, -1, -1);
 			}
 			else if (axisA == -1)
 			{
@@ -600,7 +671,7 @@ Tensor Tensor::operator*(const Tensor& B) const
 				upperDimsB = calculateTotal(newB) / subDimsB;
 				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
 
-				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+				mulKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
 			}
 			else if (axisB == -1)
 			{
@@ -608,7 +679,7 @@ Tensor Tensor::operator*(const Tensor& B) const
 				upperDimsA = total / subDimsA;
 				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
 
-				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+				mulKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
 			}
 			else
 			{
@@ -620,7 +691,7 @@ Tensor Tensor::operator*(const Tensor& B) const
 				upperDimsA = total / subDimsA;
 				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
 
-				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+				mulKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
 			}
 		}
 		else
@@ -637,7 +708,7 @@ Tensor Tensor::operator*(const Tensor& B) const
 				stats.out_shape[i] = C.shape[i];
 			}
 
-			universalMulKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
+			universalMulKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -703,7 +774,7 @@ Tensor Tensor::operator*(const Tensor& B) const
 
 			if (axisA == -1 && axisB == -1)
 			{
-				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+				mulKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, -1, -1, -1, -1, -1);
 			}
 			else if (axisA == -1)
 			{
@@ -711,7 +782,7 @@ Tensor Tensor::operator*(const Tensor& B) const
 				upperDimsB = B.total / subDimsB;
 				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
 
-				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+				mulKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
 			}
 			else if (axisB == -1)
 			{
@@ -719,7 +790,7 @@ Tensor Tensor::operator*(const Tensor& B) const
 				upperDimsA = calculateTotal(newA) / subDimsA;
 				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
 
-				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+				mulKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
 			}
 			else
 			{
@@ -731,7 +802,7 @@ Tensor Tensor::operator*(const Tensor& B) const
 				upperDimsB = B.total / subDimsB;
 				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
 
-				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+				mulKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
 			}
 		}
 		else
@@ -748,7 +819,7 @@ Tensor Tensor::operator*(const Tensor& B) const
 				stats.out_shape[i] = C.shape[i];
 			}
 
-			universalMulKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
+			universalMulKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -809,7 +880,7 @@ Tensor Tensor::operator*(const Tensor& B) const
 
 			if (axisA == -1 && axisB == -1)
 			{
-				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+				mulKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, -1, -1, -1, -1, -1);
 			}
 			else if (axisA == -1)
 			{
@@ -817,7 +888,7 @@ Tensor Tensor::operator*(const Tensor& B) const
 				upperDimsB = B.total / subDimsB;
 				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
 
-				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+				mulKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
 			}
 			else if (axisB == -1)
 			{
@@ -825,7 +896,7 @@ Tensor Tensor::operator*(const Tensor& B) const
 				upperDimsA = total / subDimsA;
 				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
 
-				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+				mulKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
 			}
 			else
 			{
@@ -837,7 +908,7 @@ Tensor Tensor::operator*(const Tensor& B) const
 				upperDimsB = B.total / subDimsB;
 				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
 
-				mulKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+				mulKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
 			}
 		}
 		else
@@ -850,7 +921,7 @@ Tensor Tensor::operator*(const Tensor& B) const
 				stats.out_shape[i] = C.shape[i];
 			}
 
-			universalMulKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
+			universalMulKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -970,7 +1041,7 @@ Tensor Tensor::operator/(const Tensor& B) const
 
 			if (axisA == -1 && axisB == -1)
 			{
-				divKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+				divKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, -1, -1, -1, -1, -1);
 			}
 			else if (axisA == -1)
 			{
@@ -978,7 +1049,7 @@ Tensor Tensor::operator/(const Tensor& B) const
 				upperDimsB = calculateTotal(newB) / subDimsB;
 				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
 
-				divKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+				divKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
 			}
 			else if (axisB == -1)
 			{
@@ -986,7 +1057,7 @@ Tensor Tensor::operator/(const Tensor& B) const
 				upperDimsA = total / subDimsA;
 				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
 
-				divKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+				divKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
 			}
 			else
 			{
@@ -998,7 +1069,7 @@ Tensor Tensor::operator/(const Tensor& B) const
 				upperDimsA = total / subDimsA;
 				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
 
-				divKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+				divKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
 			}
 		}
 		else
@@ -1015,7 +1086,7 @@ Tensor Tensor::operator/(const Tensor& B) const
 				stats.out_shape[i] = C.shape[i];
 			}
 
-			universalDivKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
+			universalDivKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -1081,7 +1152,7 @@ Tensor Tensor::operator/(const Tensor& B) const
 
 			if (axisA == -1 && axisB == -1)
 			{
-				divKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+				divKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, -1, -1, -1, -1, -1);
 			}
 			else if (axisA == -1)
 			{
@@ -1089,7 +1160,7 @@ Tensor Tensor::operator/(const Tensor& B) const
 				upperDimsB = B.total / subDimsB;
 				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
 
-				divKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+				divKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
 			}
 			else if (axisB == -1)
 			{
@@ -1097,7 +1168,7 @@ Tensor Tensor::operator/(const Tensor& B) const
 				upperDimsA = calculateTotal(newA) / subDimsA;
 				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
 
-				divKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+				divKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
 			}
 			else
 			{
@@ -1109,7 +1180,7 @@ Tensor Tensor::operator/(const Tensor& B) const
 				upperDimsB = B.total / subDimsB;
 				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
 
-				divKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+				divKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
 			}
 		}
 		else
@@ -1126,7 +1197,7 @@ Tensor Tensor::operator/(const Tensor& B) const
 				stats.out_shape[i] = C.shape[i];
 			}
 
-			universalDivKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
+			universalDivKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -1187,7 +1258,7 @@ Tensor Tensor::operator/(const Tensor& B) const
 
 			if (axisA == -1 && axisB == -1)
 			{
-				divKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+				divKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, -1, -1, -1, -1, -1);
 			}
 			else if (axisA == -1)
 			{
@@ -1195,7 +1266,7 @@ Tensor Tensor::operator/(const Tensor& B) const
 				upperDimsB = B.total / subDimsB;
 				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
 
-				divKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+				divKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
 			}
 			else if (axisB == -1)
 			{
@@ -1203,7 +1274,7 @@ Tensor Tensor::operator/(const Tensor& B) const
 				upperDimsA = total / subDimsA;
 				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
 
-				divKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+				divKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
 			}
 			else
 			{
@@ -1215,7 +1286,7 @@ Tensor Tensor::operator/(const Tensor& B) const
 				upperDimsB = B.total / subDimsB;
 				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
 
-				divKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+				divKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
 			}
 		}
 		else
@@ -1228,7 +1299,7 @@ Tensor Tensor::operator/(const Tensor& B) const
 				stats.out_shape[i] = C.shape[i];
 			}
 
-			universalDivKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
+			universalDivKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -1361,7 +1432,7 @@ Tensor Tensor::operator+(const Tensor& B) const
 
 			if (axisA == -1 && axisB == -1)
 			{
-				addKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+				addKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, -1, -1, -1, -1, -1);
 			}
 			else if (axisA == -1)
 			{
@@ -1369,7 +1440,7 @@ Tensor Tensor::operator+(const Tensor& B) const
 				upperDimsB = calculateTotal(newB) / subDimsB;
 				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
 
-				addKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+				addKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
 			}
 			else if (axisB == -1)
 			{
@@ -1377,7 +1448,7 @@ Tensor Tensor::operator+(const Tensor& B) const
 				upperDimsA = total / subDimsA;
 				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
 
-				addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+				addKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
 			}
 			else
 			{
@@ -1389,7 +1460,7 @@ Tensor Tensor::operator+(const Tensor& B) const
 				upperDimsA = total / subDimsA;
 				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
 
-				addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+				addKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
 			}
 		}
 		else
@@ -1406,7 +1477,7 @@ Tensor Tensor::operator+(const Tensor& B) const
 				stats.out_shape[i] = C.shape[i];
 			}
 
-			universalAddKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
+			universalAddKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -1472,7 +1543,7 @@ Tensor Tensor::operator+(const Tensor& B) const
 
 			if (axisA == -1 && axisB == -1)
 			{
-				addKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+				addKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, -1, -1, -1, -1, -1);
 			}
 			else if (axisA == -1)
 			{
@@ -1480,7 +1551,7 @@ Tensor Tensor::operator+(const Tensor& B) const
 				upperDimsB = B.total / subDimsB;
 				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
 
-				addKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+				addKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
 			}
 			else if (axisB == -1)
 			{
@@ -1488,7 +1559,7 @@ Tensor Tensor::operator+(const Tensor& B) const
 				upperDimsA = calculateTotal(newA) / subDimsA;
 				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
 
-				addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+				addKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
 			}
 			else
 			{
@@ -1500,7 +1571,7 @@ Tensor Tensor::operator+(const Tensor& B) const
 				upperDimsB = B.total / subDimsB;
 				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
 
-				addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+				addKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
 			}
 		}
 		else
@@ -1517,7 +1588,7 @@ Tensor Tensor::operator+(const Tensor& B) const
 				stats.out_shape[i] = C.shape[i];
 			}
 
-			universalAddKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
+			universalAddKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -1578,7 +1649,7 @@ Tensor Tensor::operator+(const Tensor& B) const
 
 			if (axisA == -1 && axisB == -1)
 			{
-				addKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+				addKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, -1, -1, -1, -1, -1);
 			}
 			else if (axisA == -1)
 			{
@@ -1586,7 +1657,7 @@ Tensor Tensor::operator+(const Tensor& B) const
 				upperDimsB = B.total / subDimsB;
 				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
 
-				addKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+				addKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
 			}
 			else if (axisB == -1)
 			{
@@ -1594,7 +1665,7 @@ Tensor Tensor::operator+(const Tensor& B) const
 				upperDimsA = total / subDimsA;
 				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
 
-				addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+				addKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
 			}
 			else
 			{
@@ -1606,7 +1677,7 @@ Tensor Tensor::operator+(const Tensor& B) const
 				upperDimsB = B.total / subDimsB;
 				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
 
-				addKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+				addKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
 			}
 		}
 		else
@@ -1619,7 +1690,7 @@ Tensor Tensor::operator+(const Tensor& B) const
 				stats.out_shape[i] = C.shape[i];
 			}
 
-			universalAddKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
+			universalAddKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -1739,7 +1810,7 @@ Tensor Tensor::operator-(const Tensor& B) const
 
 			if (axisA == -1 && axisB == -1)
 			{
-				subKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+				subKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, -1, -1, -1, -1, -1);
 			}
 			else if (axisA == -1)
 			{
@@ -1747,7 +1818,7 @@ Tensor Tensor::operator-(const Tensor& B) const
 				upperDimsB = calculateTotal(newB) / subDimsB;
 				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
 
-				subKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+				subKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
 			}
 			else if (axisB == -1)
 			{
@@ -1755,7 +1826,7 @@ Tensor Tensor::operator-(const Tensor& B) const
 				upperDimsA = total / subDimsA;
 				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
 
-				subKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+				subKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
 			}
 			else
 			{
@@ -1767,7 +1838,7 @@ Tensor Tensor::operator-(const Tensor& B) const
 				upperDimsA = total / subDimsA;
 				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
 
-				subKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+				subKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
 			}
 		}
 		else
@@ -1784,7 +1855,7 @@ Tensor Tensor::operator-(const Tensor& B) const
 				stats.out_shape[i] = C.shape[i];
 			}
 
-			universalSubKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
+			universalSubKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -1850,7 +1921,7 @@ Tensor Tensor::operator-(const Tensor& B) const
 
 			if (axisA == -1 && axisB == -1)
 			{
-				subKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+				subKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, -1, -1, -1, -1, -1);
 			}
 			else if (axisA == -1)
 			{
@@ -1858,7 +1929,7 @@ Tensor Tensor::operator-(const Tensor& B) const
 				upperDimsB = B.total / subDimsB;
 				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
 
-				subKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+				subKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
 			}
 			else if (axisB == -1)
 			{
@@ -1866,7 +1937,7 @@ Tensor Tensor::operator-(const Tensor& B) const
 				upperDimsA = calculateTotal(newA) / subDimsA;
 				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
 
-				subKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+				subKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
 			}
 			else
 			{
@@ -1878,7 +1949,7 @@ Tensor Tensor::operator-(const Tensor& B) const
 				upperDimsB = B.total / subDimsB;
 				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
 
-				subKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+				subKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
 			}
 		}
 		else
@@ -1895,7 +1966,7 @@ Tensor Tensor::operator-(const Tensor& B) const
 				stats.out_shape[i] = C.shape[i];
 			}
 
-			universalSubKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
+			universalSubKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -1956,7 +2027,7 @@ Tensor Tensor::operator-(const Tensor& B) const
 
 			if (axisA == -1 && axisB == -1)
 			{
-				subKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, -1, -1, -1, -1, -1);
+				subKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, -1, -1, -1, -1, -1);
 			}
 			else if (axisA == -1)
 			{
@@ -1964,7 +2035,7 @@ Tensor Tensor::operator-(const Tensor& B) const
 				upperDimsB = B.total / subDimsB;
 				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
 
-				subKernel << <grid, block >> > (C.data, data, B.data, C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
+				subKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, -1, subDimsB, -1, upperDimsB, -1, upperStrideC_B);
 			}
 			else if (axisB == -1)
 			{
@@ -1972,7 +2043,7 @@ Tensor Tensor::operator-(const Tensor& B) const
 				upperDimsA = total / subDimsA;
 				upperStrideC_A = axisA == 0 ? 1 : C.stride[axisA - 1];
 
-				subKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
+				subKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, -1, upperDimsA, -1, upperStrideC_A, -1);
 			}
 			else
 			{
@@ -1984,7 +2055,7 @@ Tensor Tensor::operator-(const Tensor& B) const
 				upperDimsB = B.total / subDimsB;
 				upperStrideC_B = axisB == 0 ? 1 : C.stride[axisB - 1];
 
-				subKernel << <grid, block >> > (C.data, data, B.data, C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
+				subKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, subDimsA, subDimsB, upperDimsA, upperDimsB, upperStrideC_A, upperStrideC_B);
 			}
 		}
 		else
@@ -1997,7 +2068,7 @@ Tensor Tensor::operator-(const Tensor& B) const
 				stats.out_shape[i] = C.shape[i];
 			}
 
-			universalSubKernel << <grid, block >> > (C.data, data, B.data, C.total, C.dim(), stats);
+			universalSubKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, C.dim(), stats);
 		}
 
 		return C;
@@ -2021,7 +2092,7 @@ Tensor Tensor::operator*(float x) const
 	int block = 256;
 	int grid = (total + block - 1) / block;
 
-	mulScalarKernel << <grid, block >> > (data, C.rawData(), x, total);
+	mulScalarKernel << <grid, block >> > (getFloatData(), C.getFloatData(), x, total);
 
 	return C;
 }
@@ -2046,7 +2117,7 @@ Tensor Tensor::operator/(float x) const
 	int block = 256;
 	int grid = (total + block - 1) / block;
 
-	divScalarKernel << <grid, block >> > (data, C.rawData(), x, total);
+	divScalarKernel << <grid, block >> > (getFloatData(), C.getFloatData(), x, total);
 
 	return C;
 }
@@ -2068,7 +2139,7 @@ Tensor Tensor::operator+(float x) const
 	int block = 256;
 	int grid = (total + block - 1) / block;
 
-	addScalarKernel << <grid, block >> > (data, C.rawData(), x, total);
+	addScalarKernel << <grid, block >> > (getFloatData(), C.getFloatData(), x, total);
 
 	return C;
 }
@@ -2090,7 +2161,7 @@ Tensor Tensor::operator-(float x) const
 	int block = 256;
 	int grid = (total + block - 1) / block;
 
-	subScalarKernel << <grid, block >> > (data, C.rawData(), x, total);
+	subScalarKernel << <grid, block >> > (getFloatData(), C.getFloatData(), x, total);
 
 	return C;
 }
@@ -2122,7 +2193,7 @@ Tensor operator/(float x, const Tensor& A)
 	int block = 256;
 	int grid = (A.size() + block - 1) / block;
 
-	scalarDivKernel << <grid, block >> > (A.rawData(), C.rawData(), x, A.size());
+	scalarDivKernel << <grid, block >> > (A.getFloatData(), C.getFloatData(), x, A.size());
 
 	return C;
 }
@@ -2144,7 +2215,7 @@ Tensor operator-(float x, const Tensor& A)
 	int block = 256;
 	int grid = (A.size() + block - 1) / block;
 
-	scalarSubKernel << <grid, block >> > (A.rawData(), C.rawData(), x, A.size());
+	scalarSubKernel << <grid, block >> > (A.getFloatData(), C.getFloatData(), x, A.size());
 
 	return C;
 }
@@ -2169,7 +2240,7 @@ Tensor Tensor::operator==(const Tensor& B) const
 	int block = 256;
 	int grid = (total + block - 1) / block;
 
-	equalKernel << <grid, block >> > (data, B.rawData(), C.rawData(), total);
+	equalKernel << <grid, block >> > (getFloatData(), B.getFloatData(), C.getFloatData(), total);
 
 	return C;
 }
@@ -2191,7 +2262,7 @@ Tensor Tensor::operator>(float x) const
 	int block = 256;
 	int grid = (total + block - 1) / block;
 
-	greaterthKernel << <grid, block >> > (data, C.rawData(), x, total);
+	greaterthKernel << <grid, block >> > (getFloatData(), C.getFloatData(), x, total);
 
 	return C;
 }
@@ -2213,7 +2284,7 @@ Tensor Tensor::operator<(float x) const
 	int block = 256;
 	int grid = (total + block - 1) / block;
 
-	lessthKernel << <grid, block >> > (data, C.rawData(), x, total);
+	lessthKernel << <grid, block >> > (getFloatData(), C.getFloatData(), x, total);
 
 	return C;
 }
@@ -2275,7 +2346,7 @@ Tensor Tensor::matmul(const Tensor& B) const
 	int block = 256;
 	int grid = (C.total + block - 1) / block;
 
-	matmulKernel << <grid, block >> > (C.data, data, B.data, C.total, M, K, N);
+	matmulKernel << <grid, block >> > (C.getFloatData(), getFloatData(), B.getFloatData(), C.total, M, K, N);
 
 	return C;
 }
@@ -2310,7 +2381,7 @@ Tensor Tensor::T() const
 	int N = shape[dim() - 2];
 	int M = shape[dim() - 1];
 
-	TKernel << <grid, block >> > (C.data, data, total, N, M);
+	TKernel << <grid, block >> > (C.getFloatData(), getFloatData(), total, N, M);
 
 	return C;
 }
@@ -2394,7 +2465,7 @@ Tensor Tensor::sum(const Tensor& A, int axis, bool keepdim)
 
 		int grid = (C.total + block - 1) / block;
 
-		theSumKernel << <grid, block >> > (C.data, A.data, C.total, subDims, redDim);
+		theSumKernel << <grid, block >> > (C.getFloatData(), A.getFloatData(), C.total, subDims, redDim);
 
 		cudaError_t error = cudaGetLastError();
 
@@ -2409,9 +2480,9 @@ Tensor Tensor::sum(const Tensor& A, int axis, bool keepdim)
 
 		int grid = (A.total + block - 1) / block;
 
-		cudaMemset(C.data, 0, sizeof(float));
+		cudaMemset(C.getFloatData(), 0, sizeof(float));
 
-		sumallKernel << <grid, block, block * sizeof(float) >> > (C.data, A.data, A.total);
+		sumallKernel << <grid, block, block * sizeof(float) >> > (C.getFloatData(), A.getFloatData(), A.total);
 
 		cudaError_t error = cudaGetLastError();
 
@@ -2549,7 +2620,7 @@ Tensor Tensor::argmax(const Tensor& A, int axis, bool keepdim)
 
 		cudaMalloc(&C, grid * sizeof(MaxStats));
 
-		argmaxAllStartKernel << <grid, block, block * sizeof(MaxStats) >> > (C, A.data, A.total);
+		argmaxAllStartKernel << <grid, block, block * sizeof(MaxStats) >> > (C, A.getFloatData(), A.total);
 
 		cudaError_t error = cudaGetLastError();
 
@@ -2584,7 +2655,7 @@ Tensor Tensor::argmax(const Tensor& A, int axis, bool keepdim)
 
 		Tensor res({ 1 });
 
-		resultConversionKernel << <1, 1 >> > (res.data, C);
+		resultConversionKernel << <1, 1 >> > (res.getFloatData(), C);
 
 		error = cudaGetLastError();
 
@@ -2619,7 +2690,7 @@ Tensor Tensor::argmax(const Tensor& A, int axis, bool keepdim)
 
 	int grid = (C.total + block - 1) / block;
 
-	theArgmaxKernel << <grid, block >> > (C.data, A.data, C.total, subDims, redDim);
+	theArgmaxKernel << <grid, block >> > (C.getFloatData(), A.getFloatData(), C.total, subDims, redDim);
 
 	cudaError_t error = cudaGetLastError();
 
@@ -2706,7 +2777,7 @@ Tensor Tensor::maxT(const Tensor& A, int axis, bool keepdim)
 
 		int grid = (C.total + block - 1) / block;
 
-		theMaxKernel << <grid, block >> > (C.data, A.data, C.total, subDims, redDim);
+		theMaxKernel << <grid, block >> > (C.getFloatData(), A.getFloatData(), C.total, subDims, redDim);
 
 		cudaError_t error = cudaGetLastError();
 
@@ -2721,7 +2792,7 @@ Tensor Tensor::maxT(const Tensor& A, int axis, bool keepdim)
 
 		Tensor C({ grid });
 
-		maxallKernel << <grid, block, block * sizeof(float) >> > (C.data, A.data, A.total);
+		maxallKernel << <grid, block, block * sizeof(float) >> > (C.getFloatData(), A.getFloatData(), A.total);
 
 		cudaError_t error = cudaGetLastError();
 
@@ -2734,7 +2805,7 @@ Tensor Tensor::maxT(const Tensor& A, int axis, bool keepdim)
 
 			Tensor partial({ newGrid });
 
-			maxallKernel << <newGrid, block, block * sizeof(float) >> > (partial.data, C.data, C.total);
+			maxallKernel << <newGrid, block, block * sizeof(float) >> > (partial.getFloatData(), C.getFloatData(), C.total);
 
 			cudaError_t error = cudaGetLastError();
 
@@ -2767,7 +2838,7 @@ Tensor Tensor::powT(const Tensor& A, float power)
 	int block = 256;
 	int grid = (A.size() + block - 1) / block;
 
-	powKernel << <grid, block >> > (A.data, C.data, power, A.total);
+	powKernel << <grid, block >> > (A.getFloatData(), C.getFloatData(), power, A.total);
 
 	return C;
 }
@@ -2789,7 +2860,7 @@ Tensor Tensor::sqrtT(const Tensor& A)
 	int block = 256;
 	int grid = (A.size() + block - 1) / block;
 
-	sqrtKernel << <grid, block >> > (A.data, C.data, A.total);
+	sqrtKernel << <grid, block >> > (A.getFloatData(), C.getFloatData(), A.total);
 
 	return C;
 }
@@ -2811,7 +2882,7 @@ Tensor Tensor::expT(const Tensor& A)
 	int block = 256;
 	int grid = (A.size() + block - 1) / block;
 
-	expKernel << <grid, block >> > (A.data, C.data, A.total);
+	expKernel << <grid, block >> > (A.getFloatData(), C.getFloatData(), A.total);
 
 	return C;
 }
@@ -2833,7 +2904,7 @@ Tensor Tensor::logT(const Tensor& A)
 	int block = 256;
 	int grid = (A.size() + block - 1) / block;
 
-	logKernel << <grid, block >> > (A.data, C.data, A.total);
+	logKernel << <grid, block >> > (A.getFloatData(), C.getFloatData(), A.total);
 
 	return C;
 }
@@ -2855,7 +2926,7 @@ Tensor Tensor::absT(const Tensor& A)
 	int block = 256;
 	int grid = (A.size() + block - 1) / block;
 
-	absKernel << <grid, block >> > (A.data, C.data, A.total);
+	absKernel << <grid, block >> > (A.getFloatData(), C.getFloatData(), A.total);
 
 	return C;
 }
@@ -2890,7 +2961,7 @@ Tensor Tensor::clipT(const Tensor& A, float minVal, float maxVal)
 	int block = 256;
 	int grid = (A.size() + block - 1) / block;
 
-	clipKernel << <grid, block >> > (A.data, C.data, minVal, maxVal, A.total);
+	clipKernel << <grid, block >> > (A.getFloatData(), C.getFloatData(), minVal, maxVal, A.total);
 
 	return C;
 }
@@ -2912,7 +2983,7 @@ Tensor Tensor::tanhT(const Tensor& A)
 	int block = 256;
 	int grid = (A.total + block - 1) / block;
 
-	tanhKernel << <grid, block >> > (A.data, C.data, A.total);
+	tanhKernel << <grid, block >> > (A.getFloatData(), C.getFloatData(), A.total);
 
 	return C;
 }
@@ -2934,7 +3005,7 @@ Tensor Tensor::relu(const Tensor& A)
 	int block = 256;
 	int grid = (A.size() + block - 1) / block;
 
-	reluKernel << <grid, block >> > (A.data, C.data, A.total);
+	reluKernel << <grid, block >> > (A.getFloatData(), C.getFloatData(), A.total);
 
 	return C;
 }
@@ -2956,16 +3027,16 @@ Tensor Tensor::der_relu(const Tensor& A)
 	int block = 256;
 	int grid = (A.size() + block - 1) / block;
 
-	der_reluKernel << <grid, block >> > (A.data, C.data, A.total);
+	der_reluKernel << <grid, block >> > (A.getFloatData(), C.getFloatData(), A.total);
 
 	return C;
 }
 
 Tensor Tensor::clone() const
 {
-	Tensor C(shape);
+	Tensor C(shape, dtype);
 
-	cudaMemcpy(C.data, data, total * sizeof(float), cudaMemcpyDeviceToDevice);
+	cudaMemcpy(C.data, data, total * calcDataSize(dtype), cudaMemcpyDeviceToDevice);
 
 	return C;
 }

@@ -25,21 +25,30 @@ struct BroadcastStats
 	int strideB[MAX_TENSOR_LENGTH]{};
 };
 
+enum class DataType
+{
+	float32,
+	int32
+};
+
 class Tensor
 {
 private:
-	float* data = nullptr;
+	void* data = nullptr;
 	vector<int> shape;
 	vector<int> stride;
-	int total;
+	int total = 0;
+	DataType dtype = DataType::float32;
 
 	static int calculateTotal(const vector<int>& shape);
 	static vector<int> calculateStride(const vector<int>& shape);
+	static size_t calcDataSize(DataType dtype);
+	size_t byteSize() const;
 
 public:
 	Tensor();
 
-	Tensor(const vector<int>& shape);
+	Tensor(const vector<int>& shape, DataType dtype = DataType::float32);
 
 	~Tensor();
 
@@ -49,9 +58,13 @@ public:
 	Tensor(Tensor&& other) noexcept;
 	Tensor& operator=(Tensor&& other) noexcept;
 
-	float* rawData();
+	float* getFloatData();
 
-	const float* rawData() const;
+	const float* getFloatData() const;
+
+	int32_t* getIntData();
+
+	const int32_t* getIntData() const;
 
 	Tensor& operator=(const std::vector<float>& X);
 
@@ -65,9 +78,9 @@ public:
 
 	CPUTensor toCPU() const;
 
-	static Tensor zeros(const vector<int>& shape);
+	static Tensor zeros(const vector<int>& shape, DataType dtype = DataType::float32);
 
-	static Tensor fill(const vector<int>& shape, float value);
+	static Tensor fill(const vector<int>& shape, float value, DataType dtype = DataType::float32);
 
 	static Tensor random(const vector<int>& shape);
 
@@ -157,5 +170,5 @@ struct MaxPoolRes
 	Tensor vals;
 	Tensor idxs;
 
-	MaxPoolRes(vector<int>& shape): vals(shape), idxs(shape) {}
+	MaxPoolRes(vector<int>& shape) : vals(shape), idxs(shape, DataType::int32) {}
 };
