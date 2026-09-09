@@ -414,7 +414,7 @@ Tensor Tensor::pad(const Tensor& A, int padding, float val)
 	return C;
 }
 
-__global__ void convKernel(float* C, const float* A, const float* K, int size, int channels, int filters, int kdim, int hS, int vS, int N, int M, int rN, int rM)
+__global__ void conv2DKernel(float* C, const float* A, const float* K, int size, int channels, int filters, int kdim, int hS, int vS, int N, int M, int rN, int rM)
 {
 	int idx = blockDim.x * blockIdx.x + threadIdx.x;
 
@@ -444,11 +444,11 @@ __global__ void convKernel(float* C, const float* A, const float* K, int size, i
 
 Tensor Tensor::conv2D(const Tensor& A, const Tensor& K, int kernel_size, int hStride, int vStride, int padding)
 {
-	if (A.dtype != DataType::float32)
+	if (A.dtype != DataType::float32 || K.dtype != DataType::float32)
 		throw runtime_error("Data type must be float!");
 
-	if (A.dim() < 3)
-		throw runtime_error("Tensor must be at least 3 dimensional for convolution!");
+	if (A.dim() < 3 || K.dim() < 3)
+		throw runtime_error("Tensors must be at least 3 dimensional for convolution!");
 
 	if (kernel_size < 1)
 		throw runtime_error("Invalid kernel size!");
@@ -490,9 +490,164 @@ Tensor Tensor::conv2D(const Tensor& A, const Tensor& K, int kernel_size, int hSt
 
 	int grid = (C.total + block - 1) / block;
 
-	convKernel << <grid, block >> > (C.getFloatData(), paddedA.getFloatData(), K.getFloatData(), C.total, channels, filters, kernel_size, hStride, vStride, paddedA.shape[A.dim() - 2], paddedA.shape[A.dim() - 1], rN, rM);
+	conv2DKernel << <grid, block >> > (C.getFloatData(), paddedA.getFloatData(), K.getFloatData(), C.total, channels, filters, kernel_size, hStride, vStride, paddedA.shape[A.dim() - 2], paddedA.shape[A.dim() - 1], rN, rM);
 
 	return C;
+}
+
+__global__ void dK2DKernel(float* dK, const float* A, const float* dZ, int size, int frd_kdim, int hS, int vS, int channels, int filters, int batch_size, int N, int M, int kdimN, int kdimM)
+{
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		float total = 0.0f;
+		int k = idx / (channels * frd_kdim * frd_kdim);
+		int ires = idx % (channels * frd_kdim * frd_kdim);
+
+		for (int j = 0; j < batch_size; j++)
+		{
+			for (int i = 0; i < kdimN * kdimM; i++)
+			{
+				int idxA = i / kdimM * (vS * M) + i % kdimM * hS + ires % frd_kdim + ires / frd_kdim * M + ires / (frd_kdim * frd_kdim) * (N - frd_kdim) * M + j * channels * N * M;
+				int idxdZ = i + k * kdimN * kdimM + j * filters * kdimN * kdimM;
+
+				total += A[idxA] * dZ[idxdZ];
+			}
+		}
+
+		dK[idx] = total / batch_size;
+	}
+}
+
+Tensor Tensor::conv2D_dK(const Tensor& A, const Tensor& dZ, int hStride, int vStride, int frd_padding)
+{
+	if (A.dtype != DataType::float32 || dZ.dtype != DataType::float32)
+		throw runtime_error("Invalid data type!");
+
+	if (A.dim() < 3 || dZ.dim() < 3)
+		throw runtime_error("Tensors must be at least 3 dimensional!");
+
+	if (hStride < 1)
+		throw runtime_error("Invalid horizontal stride value!");
+
+	if (vStride < 1)
+		throw runtime_error("Invalid vertical stride value!");
+
+	if (frd_padding < 0)
+		throw runtime_error("Invalid padding value!");
+
+	Tensor paddedA = pad(A, frd_padding);
+
+	int N = paddedA.shape[paddedA.dim() - 2];
+	int M = paddedA.shape[paddedA.dim() - 1];
+	int kdimN = dZ.shape[dZ.dim() - 2];
+	int kdimM = dZ.shape[dZ.dim() - 1];
+
+	if (kdimN > N || kdimM > M)
+		throw runtime_error("dZ size too big!");
+
+	int channels = paddedA.shape[paddedA.dim() - 3];
+	int batch_size = paddedA.total / (channels * N * M);
+	int filters = dZ.total / (batch_size * kdimN * kdimM);
+	int frd_kdim = N - (kdimN - 1) * vStride - 2 * frd_padding;
+
+	Tensor dK({ filters, channels, frd_kdim, frd_kdim });
+
+	int block = 256;
+
+	int grid = (dK.total + block - 1) / block;
+
+	dK2DKernel << <grid, block >> > (dK.getFloatData(), paddedA.getFloatData(), dZ.getFloatData(), dK.total, frd_kdim, hStride, vStride, channels, filters, batch_size, N, M, kdimN, kdimM);
+
+	return dK;
+}
+
+__global__ void dX2DKernel(float* dX, const float* dZ, const float* K, int size, int channels, int filters, int kdim, int hS, int vS, int N, int M, int rN, int rM)
+{
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		float total = 0.0f;
+
+		int k = idx / (rN * rM) % filters;
+		int batch = idx / (filters * rN * rM);
+		int new_idx = idx % (rN * rM) + batch * rN * rM;
+
+		for (int j = 0; j < channels; j++)
+		{
+			for (int i = 0; i < kdim * kdim; i++)
+			{
+				int idxX = i / kdim * (M - kdim) + i + new_idx % rM * hS + new_idx / rM * (vS * M) + new_idx / (rN * rM) * (channels * N - rN * vS) * M + j * N * M;
+				int idxK = i + j * kdim * kdim + k * channels * kdim * kdim;
+
+				atomicAdd(&dX[idxX], dZ[idx] * K[idxK]);
+			}
+		}
+	}
+}
+
+__global__ void reversePaddingKernel(float* C, const float* A, int size, int M, int pM, int N, int padding)
+{
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		int idxA = idx / (N * M) * (2 * padding * pM) + (idx / M + padding) * pM + idx % M + padding;
+
+		C[idx] = A[idxA];
+	}
+}
+
+Tensor Tensor::conv2D_dX(const Tensor& dZ, const Tensor& K, int frdN, int frdM, int hStride, int vStride, int frd_padding)
+{
+	if (dZ.dtype != DataType::float32 || K.dtype != DataType::float32)
+		throw runtime_error("Invalid data type!");
+
+	if (dZ.dim() < 3 || K.dim() != 4)
+		throw runtime_error("dZ must be 3 dimensional and K must have 4 dimensions!");
+
+	if (frdN < 1 || frdM < 1)
+		throw runtime_error("Invalid forward input dimensions!");
+
+	if (hStride < 1)
+		throw runtime_error("Invalid horizontal stride value!");
+
+	if (vStride < 1)
+		throw runtime_error("Invalid vertical stride value!");
+
+	if (frd_padding < 0)
+		throw runtime_error("Invalid padding value!");
+
+	int kdim = K.shape[K.dim() - 1];
+	int dZN = dZ.shape[dZ.dim() - 2];
+	int dZM = dZ.shape[dZ.dim() - 1];
+	int padN = frdN + 2 * frd_padding;
+	int padM = frdM + 2 * frd_padding;
+
+	if (kdim > padN || kdim > padM)
+		throw runtime_error("Kernel size too big!");
+
+	int channels = K.shape[K.dim() - 3];
+	int filters = dZ.shape[dZ.dim() - 3];
+	int batch_size = dZ.total / (filters * dZN * dZM);
+
+	Tensor paddeddX = zeros({ batch_size, channels, padN, padM });
+
+	int block = 256;
+
+	int dXgrid = (dZ.total + block - 1) / block;
+
+	dX2DKernel << <dXgrid, block >> > (paddeddX.getFloatData(), dZ.getFloatData(), K.getFloatData(), dZ.total, channels, filters, kdim, hStride, vStride, padN, padM, dZN, dZM);
+
+	Tensor dX({ batch_size, channels, frdN, frdM });
+
+	int padding_grid = (dX.total + block - 1) / block;
+
+	reversePaddingKernel << <padding_grid, block >> > (dX.getFloatData(), paddeddX.getFloatData(), dX.total, frdM, padM, frdN, frd_padding);
+
+	return dX;
 }
 
 __global__ void maxPoolKernel(float* C_vals, int32_t* C_idxs, const float* A, int size, int kdim, int hS, int vS, int rN, int rM, int N, int M)

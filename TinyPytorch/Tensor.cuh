@@ -102,7 +102,13 @@ public:
 
 	static Tensor conv2D(const Tensor& A, const Tensor& K, int kernel_size = 3, int hStride = 1, int vStride = 1, int padding = 0);
 
+	static Tensor conv2D_dK(const Tensor& A, const Tensor& dZ, int hStride = 1, int vStride = 1, int frd_padding = 0);
+
+	static Tensor conv2D_dX(const Tensor& dZ, const Tensor& K, int frdN, int frdM, int hStride = 1, int vStride = 1, int frd_padding = 0);
+
 	static MaxPoolRes maxPool2D(const Tensor& A, int kernel_size = 2, int hStride = 1, int vStride = 1, int padding = 0);
+
+	//static Tensor back_maxPool2D(const Tensor& dP, int frdN, int frdM, int hStride = 1, int vStride = 1, int padding = 0);
 
 	Tensor operator*(const Tensor& B) const;
 
