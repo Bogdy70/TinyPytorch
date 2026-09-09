@@ -144,10 +144,10 @@ struct AdamState
         int L = size(params.W);
         for (int l = 1; l < L; l++)
         {
-            VdW[l] = Tensor::zeros({ params.W[l].getShape()[params.W[l].dim() - 2], params.W[l].getShape()[params.W[l].dim() - 1] });
-            VdB[l] = Tensor::zeros({ params.B[l].getShape()[params.B[l].dim() - 2], params.B[l].getShape()[params.B[l].dim() - 1] });
-            SdW[l] = Tensor::zeros({ params.W[l].getShape()[params.W[l].dim() - 2], params.W[l].getShape()[params.W[l].dim() - 1] });
-            SdB[l] = Tensor::zeros({ params.B[l].getShape()[params.B[l].dim() - 2], params.B[l].getShape()[params.B[l].dim() - 1] });
+            VdW[l] = Tensor::zeros(params.W[l].getShape());
+            VdB[l] = Tensor::zeros(params.B[l].getShape());
+            SdW[l] = Tensor::zeros(params.W[l].getShape());
+            SdB[l] = Tensor::zeros(params.B[l].getShape());
         }
     }
 };
@@ -349,6 +349,39 @@ Backward backpropagation(const Forward& frd_cache, const Parameters& params, con
         if (lambda_l2 > 0.0f)
             grads.dW[l] = grads.dW[l] + ((lambda_l2 / m) * params.W[l]);
         grads.dB[l] = (1.0f / m) * Tensor::sum(grads.dZ[l], 1, true);
+    }
+
+    return grads;
+}
+
+Backward conv_bckprop(const Forward& frd_cache, const Parameters& params, const Tensor& Y, const vector<convStats>& cv_stats, const vector<MaxPoolStats>& mx_stats, const string activation, float dropout = 0.0f)
+{
+    if (dropout < 0.0f || dropout >= 1.0f)
+        throw runtime_error("Invalid dropout value!");
+
+    int L = size(frd_cache.A);
+    float m = static_cast<float>(frd_cache.A[0].getShape()[0]);
+    Backward grads(L);
+    Activation activ(activation);
+
+    grads.dZ[L - 1] = frd_cache.A[L - 1] - Y;
+    Tensor flat_A = frd_cache.A[L - 2].clone();
+    grads.dW[L - 1] = (1.0f / m) * grads.dZ[L - 1].matmul(flat_A.flatten(1));
+    grads.dB[L - 1] = (1.0f / m) * Tensor::sum(grads.dZ[L - 1], 1, true);
+    grads.dZ[L - 2] = params.W[L - 1].T().matmul(grads.dZ[L - 1]); //df
+    grads.dZ[L - 2] = grads.dZ[L - 2].T();
+    grads.dZ[L - 2].reshape(frd_cache.A[L - 2].getShape()); //dP
+
+    for (int l = L - 2; l >= 1; l--)
+    {
+        if (dropout > 0.0f)
+            grads.dZ[l] = grads.dZ[l] * frd_cache.D[l] / (1.0f - dropout);
+        grads.dZ[l] = Tensor::back_maxPool2D(grads.dZ[l], frd_cache.MPoolIdxs[l], frd_cache.Z[l].getShape()[frd_cache.Z[l].dim() - 2], frd_cache.Z[l].getShape()[frd_cache.Z[l].dim() - 1], mx_stats[l - 1].padding); //dA
+        grads.dZ[l] = grads.dZ[l] * activ.derivate(frd_cache.Z[l]); //dZ
+        grads.dW[l] = Tensor::conv2D_dK(frd_cache.A[l - 1], grads.dZ[l], cv_stats[l - 1].kernel_size, cv_stats[l - 1].hStride, cv_stats[l - 1].vStride, cv_stats[l - 1].padding);
+        grads.dB[l] = (1.0f / m) * Tensor::sum(Tensor::sum(Tensor::sum(grads.dZ[l], 3, true), 2, true), 0);
+        if (l != 1)
+            grads.dZ[l - 1] = Tensor::conv2D_dX(grads.dZ[l], params.W[l], frd_cache.A[l - 1].getShape()[frd_cache.A[l - 1].dim() - 2], frd_cache.A[l - 1].getShape()[frd_cache.A[l - 1].dim() - 1], cv_stats[l - 1].hStride, cv_stats[l - 1].vStride, cv_stats[l - 1].padding);
     }
 
     return grads;
@@ -979,6 +1012,88 @@ int main()
         Tcatva = vector<int32_t>{ 1, 2, 3, 4, 5, 6 };
         Tcatva.toCPU().print();
 
+        cout << "\n\nFull CNN pass\n\n";
+        CPUTensor::setSeed(42);
+        Tensor Img = Tensor::randomUniform({ 4, 2, 8, 10 }, 0.0f, 1.0f);
+        Tensor Y_Img({ 10, 4 });
+        Y_Img = vector<float>{
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    0, 0, 0, 0
+        };
+
+        vector<convStats> cv_stats1 = {
+            {2, 3, 3, 2, 1, 1},
+            {3, 2, 2, 1, 1, 0}
+        };
+
+        vector<MaxPoolStats> mx_stats1 = {
+            {2, 1, 2, 0},
+            {2, 1, 1, 0}
+        };
+
+        Parameters cnn_params = init_conv(cv_stats1, mx_stats1, Img, 10);
+        AdamState cnn_adam1(cnn_params);
+        Forward cnn_frd_cache = conv_frdpass(cnn_params, Img, cv_stats1, mx_stats1, "relu");
+        Backward cnn_grads = conv_bckprop(cnn_frd_cache, cnn_params, Y_Img, cv_stats1, mx_stats1, "relu");
+        auto printShape = [](const string& name, const Tensor& tensor)
+            {
+                const auto shape = tensor.getShape();
+
+                cout << name << ": (";
+
+                for (size_t i = 0; i < shape.size(); i++)
+                {
+                    if (i > 0)
+                        cout << ", ";
+
+                    cout << shape[i];
+                }
+
+                cout << ")\n";
+            };
+
+        printShape("Input", Img);
+        printShape("Labels", Y_Img);
+
+        int L = static_cast<int>(cnn_params.W.size());
+
+        for (int l = 1; l < L; l++)
+        {
+            cout << "\nLayer " << l
+                << (l == L - 1 ? " - Fully connected\n" : " - Convolution\n");
+
+            printShape("W", cnn_params.W[l]);
+            printShape("B", cnn_params.B[l]);
+
+            printShape("Z", cnn_frd_cache.Z[l]);
+            printShape("A", cnn_frd_cache.A[l]);
+
+            if (l < L - 1)
+                printShape("MaxPool indices", cnn_frd_cache.MPoolIdxs[l]);
+
+            printShape("dZ", cnn_grads.dZ[l]);
+            printShape("dW", cnn_grads.dW[l]);
+            printShape("dB", cnn_grads.dB[l]);
+
+            cout << "Weight gradient shape: "
+                << (cnn_params.W[l].getShape() == cnn_grads.dW[l].getShape()
+                    ? "MATCH" : "MISMATCH")
+                << "\n";
+
+            cout << "Bias gradient shape: "
+                << (cnn_params.B[l].getShape() == cnn_grads.dB[l].getShape()
+                    ? "MATCH" : "MISMATCH")
+                << "\n";
+        }
+        cnn_params = move(adam(cnn_params, cnn_grads, cnn_adam1, 0.01f, 0.9f, 0.999f, 1e-8f));
 
         cout << "\n\nCUDA cat dataset test\n\n";
 

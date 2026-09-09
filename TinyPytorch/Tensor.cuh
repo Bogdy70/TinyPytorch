@@ -102,7 +102,7 @@ public:
 
 	static Tensor conv2D(const Tensor& A, const Tensor& K, int kernel_size = 3, int hStride = 1, int vStride = 1, int padding = 0);
 
-	static Tensor conv2D_dK(const Tensor& A, const Tensor& dZ, int hStride = 1, int vStride = 1, int frd_padding = 0);
+	static Tensor conv2D_dK(const Tensor& A, const Tensor& dZ, int frd_kdim = 3, int hStride = 1, int vStride = 1, int frd_padding = 0);
 
 	static Tensor conv2D_dX(const Tensor& dZ, const Tensor& K, int frdN, int frdM, int hStride = 1, int vStride = 1, int frd_padding = 0);
 

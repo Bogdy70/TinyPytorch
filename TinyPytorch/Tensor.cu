@@ -520,7 +520,7 @@ __global__ void dK2DKernel(float* dK, const float* A, const float* dZ, int size,
 	}
 }
 
-Tensor Tensor::conv2D_dK(const Tensor& A, const Tensor& dZ, int hStride, int vStride, int frd_padding)
+Tensor Tensor::conv2D_dK(const Tensor& A, const Tensor& dZ, int frd_kdim, int hStride, int vStride, int frd_padding)
 {
 	if (A.dtype != DataType::float32 || dZ.dtype != DataType::float32)
 		throw runtime_error("Invalid data type!");
@@ -550,7 +550,6 @@ Tensor Tensor::conv2D_dK(const Tensor& A, const Tensor& dZ, int hStride, int vSt
 	int channels = paddedA.shape[paddedA.dim() - 3];
 	int batch_size = paddedA.total / (channels * N * M);
 	int filters = dZ.total / (batch_size * kdimN * kdimM);
-	int frd_kdim = N - (kdimN - 1) * vStride - 2 * frd_padding;
 
 	Tensor dK({ filters, channels, frd_kdim, frd_kdim });
 
