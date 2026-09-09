@@ -569,8 +569,6 @@ __global__ void dX2DKernel(float* dX, const float* dZ, const float* K, int size,
 
 	if (idx < size)
 	{
-		float total = 0.0f;
-
 		int k = idx / (rN * rM) % filters;
 		int batch = idx / (filters * rN * rM);
 		int new_idx = idx % (rN * rM) + batch * rN * rM;
@@ -633,19 +631,22 @@ Tensor Tensor::conv2D_dX(const Tensor& dZ, const Tensor& K, int frdN, int frdM, 
 	int filters = dZ.shape[dZ.dim() - 3];
 	int batch_size = dZ.total / (filters * dZN * dZM);
 
-	Tensor paddeddX = zeros({ batch_size, channels, padN, padM });
+	Tensor paddedX = zeros({ batch_size, channels, padN, padM });
 
 	int block = 256;
 
 	int dXgrid = (dZ.total + block - 1) / block;
 
-	dX2DKernel << <dXgrid, block >> > (paddeddX.getFloatData(), dZ.getFloatData(), K.getFloatData(), dZ.total, channels, filters, kdim, hStride, vStride, padN, padM, dZN, dZM);
+	dX2DKernel << <dXgrid, block >> > (paddedX.getFloatData(), dZ.getFloatData(), K.getFloatData(), dZ.total, channels, filters, kdim, hStride, vStride, padN, padM, dZN, dZM);
+
+	if (frd_padding == 0)
+		return paddedX;
 
 	Tensor dX({ batch_size, channels, frdN, frdM });
 
 	int padding_grid = (dX.total + block - 1) / block;
 
-	reversePaddingKernel << <padding_grid, block >> > (dX.getFloatData(), paddeddX.getFloatData(), dX.total, frdM, padM, frdN, frd_padding);
+	reversePaddingKernel << <padding_grid, block >> > (dX.getFloatData(), paddedX.getFloatData(), dX.total, frdM, padM, frdN, frd_padding);
 
 	return dX;
 }
@@ -725,6 +726,58 @@ MaxPoolRes Tensor::maxPool2D(const Tensor& A, int kernel_size, int hStride, int 
 	maxPoolKernel << <grid, block >> > (max_pool.vals.getFloatData(), max_pool.idxs.getIntData(), paddedA.getFloatData(), max_pool.vals.total, kernel_size, hStride, vStride, rN, rM, paddedA.shape[paddedA.dim() - 2], paddedA.shape[paddedA.dim() - 1]);
 
 	return max_pool;
+}
+
+__global__ void backMaxPool2DKernel(float* dA, const float* dP_vals, const int32_t* dP_idxs, int size)
+{
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+	if (idx < size)
+	{
+		atomicAdd(&dA[dP_idxs[idx]], dP_vals[idx]);
+	}
+}
+
+Tensor Tensor::back_maxPool2D(const Tensor& dP_vals, const Tensor& dP_idxs, int frdN, int frdM, int frd_padding)
+{
+	if (dP_vals.dtype != DataType::float32 || dP_idxs.dtype != DataType::int32)
+		throw runtime_error("Invalid data types!");
+
+	if (dP_vals.dim() != 4 || dP_idxs.dim() != 4)
+		throw runtime_error("Expected 4D pooling gradients and indices!");
+
+	if (dP_vals.shape != dP_idxs.shape)
+		throw runtime_error("Pooling gradients and indices must match!");
+
+	if (frdN < 1 || frdM < 1)
+		throw runtime_error("Invalid forward input values!");
+
+	if (frd_padding < 0)
+		throw runtime_error("Invalid padding value!");
+
+	int batch_size = dP_vals.shape[dP_vals.dim() - 4];
+	int filters = dP_vals.shape[dP_vals.dim() - 3];
+	int padN = frdN + 2 * frd_padding;
+	int padM = frdM + 2 * frd_padding;
+
+	Tensor paddedA = zeros({ batch_size, filters, padN, padM });
+
+	int block = 256;
+
+	int grid = (dP_vals.total + block - 1) / block;
+
+	backMaxPool2DKernel << <grid, block >> > (paddedA.getFloatData(), dP_vals.getFloatData(), dP_idxs.getIntData(), dP_vals.total);
+
+	if (frd_padding == 0)
+		return paddedA;
+
+	Tensor dA({ batch_size, filters, frdN, frdM });
+
+	int padding_grid = (dA.total + block - 1) / block;
+
+	reversePaddingKernel << <padding_grid, block >> > (dA.getFloatData(), paddedA.getFloatData(), dA.total, frdM, padM, frdN, frd_padding);
+
+	return dA;
 }
 
 __global__ void mulKernel(float* C, const float* A, const float* B, int size, int subA, int subB, int upperA, int upperB, int strideA, int strideB)

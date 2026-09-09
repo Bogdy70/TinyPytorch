@@ -108,7 +108,7 @@ public:
 
 	static MaxPoolRes maxPool2D(const Tensor& A, int kernel_size = 2, int hStride = 1, int vStride = 1, int padding = 0);
 
-	//static Tensor back_maxPool2D(const Tensor& dP, int frdN, int frdM, int hStride = 1, int vStride = 1, int padding = 0);
+	static Tensor back_maxPool2D(const Tensor& dP_vals, const Tensor& dP_idxs, int frdN, int frdM, int frd_padding = 0);
 
 	Tensor operator*(const Tensor& B) const;
 
