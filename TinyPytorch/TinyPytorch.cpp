@@ -1518,7 +1518,6 @@ int main()
             {2, 2, 2, 0}
         };
 
-
         {
             cout << "Test1: all 0\n\n";
 
@@ -1526,7 +1525,7 @@ int main()
 
             CPUTensor::setSeed(42);
 
-            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "relu", 0.001f, 200, 17);
+            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "relu", 0.001f, 150, 17);
 
             cudaDeviceSynchronize();
 
@@ -1544,7 +1543,7 @@ int main()
 
             CPUTensor::setSeed(42);
 
-            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "relu", 0.001f, 200, 17, 0.2f);
+            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "relu", 0.001f, 150, 17, 0.2f);
 
             cudaDeviceSynchronize();
 
@@ -1562,7 +1561,7 @@ int main()
 
             CPUTensor::setSeed(42);
 
-            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "relu", 0.001f, 200, 17, 0.0f, 0.0f, 0.1f);
+            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "relu", 0.001f, 150, 17, 0.0f, 0.0f, 0.1f);
 
             cudaDeviceSynchronize();
 
@@ -1580,7 +1579,7 @@ int main()
 
             CPUTensor::setSeed(42);
 
-            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "relu", 0.001f, 200, 17, 0.2f, 0.0f, 0.1f);
+            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "relu", 0.001f, 150, 17, 0.2f, 0.0f, 0.1f);
 
             cudaDeviceSynchronize();
 
@@ -1598,7 +1597,7 @@ int main()
 
             CPUTensor::setSeed(42);
 
-            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "tanh", 0.001f, 200, 17);
+            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "tanh", 0.001f, 150, 17);
 
             cudaDeviceSynchronize();
 
@@ -1616,7 +1615,7 @@ int main()
 
             CPUTensor::setSeed(42);
 
-            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "tanh", 0.001f, 200, 17, 0.2f);
+            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "tanh", 0.001f, 150, 17, 0.2f);
 
             cudaDeviceSynchronize();
 
@@ -1634,7 +1633,7 @@ int main()
 
             CPUTensor::setSeed(42);
 
-            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "tanh", 0.001f, 200, 17, 0.0f, 0.0f, 0.1f);
+            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "tanh", 0.001f, 150, 17, 0.0f, 0.0f, 0.1f);
 
             cudaDeviceSynchronize();
 
@@ -1652,7 +1651,7 @@ int main()
 
             CPUTensor::setSeed(42);
 
-            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "tanh", 0.001f, 200, 17, 0.2f, 0.0f, 0.1f);
+            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "tanh", 0.001f, 150, 17, 0.2f, 0.0f, 0.1f);
 
             cudaDeviceSynchronize();
 
