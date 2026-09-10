@@ -8,14 +8,14 @@
   "normalization": "pixel / 255.0",
   "shapes": {
     "X_train": [
-      500,
+      1000,
       3,
       32,
       32
     ],
     "Y_train": [
       10,
-      500
+      1000
     ],
     "X_test": [
       100,

@@ -1,0 +1,6 @@
+X_train 1000 3 128 128
+Y_train 1 1000
+X_val 100 3 128 128
+Y_val 1 100
+X_test 100 3 128 128
+Y_test 1 100

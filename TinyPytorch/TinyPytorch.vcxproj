@@ -172,6 +172,12 @@
     <None Include="data\cifar10_cnn\X_train.bin" />
     <None Include="data\cifar10_cnn\Y_test.bin" />
     <None Include="data\cifar10_cnn\Y_train.bin" />
+    <None Include="data\meteor_cnn\X_test.bin" />
+    <None Include="data\meteor_cnn\X_train.bin" />
+    <None Include="data\meteor_cnn\X_val.bin" />
+    <None Include="data\meteor_cnn\Y_test.bin" />
+    <None Include="data\meteor_cnn\Y_train.bin" />
+    <None Include="data\meteor_cnn\Y_val.bin" />
     <None Include="data\mnist\X_test.bin" />
     <None Include="data\mnist\X_train.bin" />
     <None Include="data\mnist\Y_test.bin" />

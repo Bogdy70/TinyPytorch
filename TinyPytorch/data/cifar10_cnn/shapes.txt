@@ -1,4 +1,4 @@
-X_train 500 3 32 32
-Y_train 10 500
+X_train 1000 3 32 32
+Y_train 10 1000
 X_test 100 3 32 32
 Y_test 10 100

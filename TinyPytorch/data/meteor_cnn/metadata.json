@@ -1,0 +1,49 @@
+{
+  "source": "https://data.mendeley.com/datasets/4k98n84d9g/1",
+  "attribution": "Andre Gradvohl and Victor Yukio Shirasuna; Mendeley Data v1; CC BY 4.0",
+  "input": "D:\\Meteors.zip",
+  "variant": "cropped",
+  "seed": 42,
+  "dtype": "little-endian IEEE-754 float32",
+  "header_bytes": 0,
+  "images": "NCHW",
+  "labels": {
+    "0": "non-meteor",
+    "1": "meteor"
+  },
+  "normalization": "pixels / 255",
+  "resize": "LANCZOS aspect-preserving fit, centered black padding",
+  "grouping": "whole filename calendar dates, across sources; approx 70/15/15 of dates",
+  "shapes": {
+    "X_train": [
+      1000,
+      3,
+      128,
+      128
+    ],
+    "Y_train": [
+      1,
+      1000
+    ],
+    "X_val": [
+      100,
+      3,
+      128,
+      128
+    ],
+    "Y_val": [
+      1,
+      100
+    ],
+    "X_test": [
+      100,
+      3,
+      128,
+      128
+    ],
+    "Y_test": [
+      1,
+      100
+    ]
+  }
+}

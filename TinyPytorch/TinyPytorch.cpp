@@ -218,7 +218,7 @@ Parameters init_params(const vector<int>& dim_list)
     return params;
 }
 
-Parameters init_conv(const vector<convStats>& conv_stats, const vector<MaxPoolStats>& pool_stats, const Tensor& X, int output_size)
+Parameters init_conv(const vector<convStats>& conv_stats, const vector<MaxPoolStats>& pool_stats, const Tensor& X, int output_size, const string& activation)
 {
     if (conv_stats.empty())
         throw runtime_error("At least one convolution layer is required!");
@@ -238,8 +238,31 @@ Parameters init_conv(const vector<convStats>& conv_stats, const vector<MaxPoolSt
 
     for (int l = 1; l <= L; l++)
     {
-        params.W[l] = Tensor::random({ conv_stats[l - 1].out_channels, conv_stats[l - 1].in_channels, conv_stats[l - 1].kernel_size, conv_stats[l - 1].kernel_size }) * sqrt(2.0f / static_cast<float>(conv_stats[l - 1].in_channels * conv_stats[l - 1].kernel_size * conv_stats[l - 1].kernel_size));
+        float n_in = static_cast<float>(conv_stats[l - 1].in_channels * conv_stats[l - 1].kernel_size * conv_stats[l - 1].kernel_size);
+        float n_out = static_cast<float>(conv_stats[l - 1].out_channels * conv_stats[l - 1].kernel_size * conv_stats[l - 1].kernel_size);
+
+        float init = activation == "relu" ? sqrt(2.0f / n_in) : sqrt(2.0f / (n_in + n_out));
+
+        params.W[l] = Tensor::random({ conv_stats[l - 1].out_channels, conv_stats[l - 1].in_channels, conv_stats[l - 1].kernel_size, conv_stats[l - 1].kernel_size }) * init;
         params.B[l] = Tensor::zeros({ conv_stats[l - 1].out_channels, 1, 1 });
+
+        if (conv_stats[l - 1].kernel_size > N + 2 * conv_stats[l - 1].padding || conv_stats[l - 1].kernel_size > M + 2 * conv_stats[l - 1].padding)
+            throw runtime_error("Invalid convolution kernel size!");
+
+        if (pool_stats[l - 1].kernel_size > N + 2 * pool_stats[l - 1].padding || pool_stats[l - 1].kernel_size > M + 2 * pool_stats[l - 1].padding)
+            throw runtime_error("Invalid max pool kernel size!");
+
+        if (conv_stats[l - 1].hStride < 1)
+            throw runtime_error("Invalid convolution horizontal stride value!");
+
+        if (pool_stats[l - 1].hStride < 1)
+            throw runtime_error("Invalid max pool horizontal stride value!");
+
+        if (conv_stats[l - 1].vStride < 1)
+            throw runtime_error("Invalid convolution vertical stride value!");
+
+        if (pool_stats[l - 1].vStride < 1)
+            throw runtime_error("Invalid max pool vertical stride value!");
 
         N = (N + 2 * conv_stats[l - 1].padding - conv_stats[l - 1].kernel_size) / conv_stats[l - 1].vStride + 1;
         N = (N + 2 * pool_stats[l - 1].padding - pool_stats[l - 1].kernel_size) / pool_stats[l - 1].vStride + 1;
@@ -251,7 +274,7 @@ Parameters init_conv(const vector<convStats>& conv_stats, const vector<MaxPoolSt
         throw runtime_error("Invalid final shape!");
 
     int flat_shape = params.W[L].getShape()[0] * N * M;
-    params.W[L + 1] = Tensor::random({ output_size, flat_shape }) * sqrt(2.0f / static_cast<float>(flat_shape));
+    params.W[L + 1] = Tensor::random({ output_size, flat_shape }) * sqrt(2.0f / static_cast<float>(flat_shape + output_size));
     params.B[L + 1] = Tensor::zeros({ output_size, 1 });
 
     return params;
@@ -354,10 +377,13 @@ Backward backpropagation(const Forward& frd_cache, const Parameters& params, con
     return grads;
 }
 
-Backward conv_bckprop(const Forward& frd_cache, const Parameters& params, const Tensor& Y, const vector<convStats>& cv_stats, const vector<MaxPoolStats>& mx_stats, const string activation, float dropout = 0.0f)
+Backward conv_bckprop(const Forward& frd_cache, const Parameters& params, const Tensor& Y, const vector<convStats>& cv_stats, const vector<MaxPoolStats>& mx_stats, const string activation, float dropout = 0.0f, float lambda_l1 = 0.0f, float lambda_l2 = 0.0f)
 {
     if (dropout < 0.0f || dropout >= 1.0f)
         throw runtime_error("Invalid dropout value!");
+
+    if (lambda_l1 < 0.0f || lambda_l2 < 0.0f)
+        throw runtime_error("Lambda values cannot be less than 0!");
 
     int L = size(frd_cache.A);
     float m = static_cast<float>(frd_cache.A[0].getShape()[0]);
@@ -367,6 +393,10 @@ Backward conv_bckprop(const Forward& frd_cache, const Parameters& params, const 
     grads.dZ[L - 1] = frd_cache.A[L - 1] - Y;
     Tensor flat_A = frd_cache.A[L - 2].clone();
     grads.dW[L - 1] = (1.0f / m) * grads.dZ[L - 1].matmul(flat_A.flatten(1));
+    if (lambda_l1 > 0.0f)
+        grads.dW[L - 1] = grads.dW[L - 1] + ((lambda_l1 / m) * sign(params.W[L - 1]));
+    if (lambda_l2 > 0.0f)
+        grads.dW[L - 1] = grads.dW[L - 1] + ((lambda_l2 / m) * params.W[L - 1]);
     grads.dB[L - 1] = (1.0f / m) * Tensor::sum(grads.dZ[L - 1], 1, true);
     grads.dZ[L - 2] = params.W[L - 1].T().matmul(grads.dZ[L - 1]); //df
     grads.dZ[L - 2] = grads.dZ[L - 2].T();
@@ -379,6 +409,10 @@ Backward conv_bckprop(const Forward& frd_cache, const Parameters& params, const 
         grads.dZ[l] = Tensor::back_maxPool2D(grads.dZ[l], frd_cache.MPoolIdxs[l], frd_cache.Z[l].getShape()[frd_cache.Z[l].dim() - 2], frd_cache.Z[l].getShape()[frd_cache.Z[l].dim() - 1], mx_stats[l - 1].padding); //dA
         grads.dZ[l] = grads.dZ[l] * activ.derivate(frd_cache.Z[l]); //dZ
         grads.dW[l] = Tensor::conv2D_dK(frd_cache.A[l - 1], grads.dZ[l], cv_stats[l - 1].kernel_size, cv_stats[l - 1].hStride, cv_stats[l - 1].vStride, cv_stats[l - 1].padding);
+        if (lambda_l1 > 0.0f)
+            grads.dW[l] = grads.dW[l] + ((lambda_l1 / m) * sign(params.W[l]));
+        if (lambda_l2 > 0.0f)
+            grads.dW[l] = grads.dW[l] + ((lambda_l2 / m) * params.W[l]);
         grads.dB[l] = (1.0f / m) * Tensor::sum(Tensor::sum(Tensor::sum(grads.dZ[l], 3, true), 2, true), 0);
         if (l != 1)
             grads.dZ[l - 1] = Tensor::conv2D_dX(grads.dZ[l], params.W[l], frd_cache.A[l - 1].getShape()[frd_cache.A[l - 1].dim() - 2], frd_cache.A[l - 1].getShape()[frd_cache.A[l - 1].dim() - 1], cv_stats[l - 1].hStride, cv_stats[l - 1].vStride, cv_stats[l - 1].padding);
@@ -497,24 +531,27 @@ Parameters train_cnn(const Tensor& Xtrain,
     int epochs,
     int viewing_rate,
     float dropout = 0.0f,
+    float lambda_l1 = 0.0f,
+    float lambda_l2 = 0.0f,
     float beta1 = 0.9f,
     float beta2 = 0.999f,
     float eps = 1e-8f)
 {
-    Parameters cnn_params = init_conv(cv_stats, mx_stats, Xtrain, ytrain.getShape()[0]);
+    Parameters cnn_params = init_conv(cv_stats, mx_stats, Xtrain, ytrain.getShape()[0], activation);
     AdamState cnn_adam(cnn_params);
 
     auto start_time = chrono::high_resolution_clock::now();
 
     for (int epoch = 0; epoch <= epochs; epoch++)
     {
-        if (epoch % viewing_rate == 0)
+        if (epoch % viewing_rate == 0 || epoch == epochs)
         {
             cudaDeviceSynchronize();
 
             Forward train_frd_cache = conv_frdpass(cnn_params, Xtrain, cv_stats, mx_stats, activation);
             Forward test_frd_cache = conv_frdpass(cnn_params, Xtest, cv_stats, mx_stats, activation);
 
+            float train_objective = cost(ytrain, train_frd_cache.A[size(cnn_params.W) - 1], cnn_params, lambda_l1, lambda_l2);
             float train_cost = cost(ytrain, train_frd_cache.A[size(cnn_params.W) - 1], cnn_params);
             float train_accuracy = accuracy(ytrain, train_frd_cache.A[size(cnn_params.W) - 1]);
 
@@ -536,14 +573,14 @@ Parameters train_cnn(const Tensor& Xtrain,
             cout << "\nPredictions:\n";
             train_frd_cache.A[last].toCPU().print();*/
 
-            cout << "Epoch: " << epoch << " || Train cost: " << train_cost << " || Test cost: " << test_cost << " || Train acc: " << train_accuracy * 100.0f << " % || Test acc: " << test_accuracy * 100.0f << " % || Time: " << time.count() << " sec\n";
+            cout << "Epoch: " << epoch << " || Train objective: " << train_objective << " || Train cost: " << train_cost << " || Test cost: " << test_cost << " || Train acc: " << train_accuracy * 100.0f << " % || Test acc: " << test_accuracy * 100.0f << " % || Time: " << time.count() << " sec\n";
         }
 
         if (epoch == epochs)
             break;
 
         Forward cnn_frd_cache = conv_frdpass(cnn_params, Xtrain, cv_stats, mx_stats, activation, dropout);
-        Backward cnn_grads = conv_bckprop(cnn_frd_cache, cnn_params, ytrain, cv_stats, mx_stats, activation, dropout);
+        Backward cnn_grads = conv_bckprop(cnn_frd_cache, cnn_params, ytrain, cv_stats, mx_stats, activation, dropout, lambda_l1, lambda_l2);
         adam(cnn_params, cnn_grads, cnn_adam, lr, beta1, beta2, eps);
     }
 
@@ -800,11 +837,20 @@ int main()
         CPUTensor X_test_mnist = CPUTensor::loadMatrixBin("data/mnist/X_test.bin", 784, 1000);
         CPUTensor y_test_mnist = CPUTensor::loadMatrixBin("data/mnist/Y_test.bin", 10, 1000);
 
-        CPUTensor X_train_cnn = CPUTensor::loadTensorBin("data/cifar10_cnn/X_train.bin", { 500, 3, 32, 32 });
-        CPUTensor y_train_cnn = CPUTensor::loadTensorBin("data/cifar10_cnn/Y_train.bin", { 10, 500 });
+        CPUTensor X_train_cnn = CPUTensor::loadTensorBin("data/cifar10_cnn/X_train.bin", { 1000, 3, 32, 32 });
+        CPUTensor y_train_cnn = CPUTensor::loadTensorBin("data/cifar10_cnn/Y_train.bin", { 10, 1000 });
 
         CPUTensor X_test_cnn = CPUTensor::loadTensorBin("data/cifar10_cnn/X_test.bin", { 100, 3, 32, 32 });
         CPUTensor y_test_cnn = CPUTensor::loadTensorBin("data/cifar10_cnn/Y_test.bin", { 10, 100 });
+
+        CPUTensor X_train_meteors = CPUTensor::loadTensorBin("data/meteor_cnn/X_train.bin", { 1000, 3, 128, 128 });
+        CPUTensor y_train_meteors = CPUTensor::loadTensorBin("data/meteor_cnn/Y_train.bin", { 1, 1000 });
+
+        CPUTensor X_val_meteors = CPUTensor::loadTensorBin("data/meteor_cnn/X_val.bin", { 100, 3, 128, 128 });
+        CPUTensor y_val_meteors = CPUTensor::loadTensorBin("data/meteor_cnn/Y_val.bin", { 1, 100 });
+
+        CPUTensor X_test_meteors = CPUTensor::loadTensorBin("data/meteor_cnn/X_test.bin", { 100, 3, 128, 128 });
+        CPUTensor y_test_meteors = CPUTensor::loadTensorBin("data/meteor_cnn/Y_test.bin", { 1, 100 });
 
         cout << "Cat dataset loaded successfully\n";
 
@@ -856,6 +902,62 @@ int main()
         {
             cout << y_test_cnn.getShape()[i];
             if (i != y_test_cnn.dim() - 1)
+                cout << ", ";
+        }
+        cout << ")";
+
+        cout << "\n\nMeteors dataset loaded successfully";
+
+        cout << "\nX_train_meteors: (";
+        for (int i = 0; i < X_train_meteors.dim(); i++)
+        {
+            cout << X_train_meteors.getShape()[i];
+            if (i != X_train_meteors.dim() - 1)
+                cout << ", ";
+        }
+        cout << ")";
+
+        cout << "\ny_train_meteors: (";
+        for (int i = 0; i < y_train_meteors.dim(); i++)
+        {
+            cout << y_train_meteors.getShape()[i];
+            if (i != y_train_meteors.dim() - 1)
+                cout << ", ";
+        }
+        cout << ")";
+
+        cout << "\nX_validation_meteors: (";
+        for (int i = 0; i < X_val_meteors.dim(); i++)
+        {
+            cout << X_val_meteors.getShape()[i];
+            if (i != X_val_meteors.dim() - 1)
+                cout << ", ";
+        }
+        cout << ")";
+
+        cout << "\ny_validation_meteors: (";
+        for (int i = 0; i < y_val_meteors.dim(); i++)
+        {
+            cout << y_val_meteors.getShape()[i];
+            if (i != y_val_meteors.dim() - 1)
+                cout << ", ";
+        }
+        cout << ")";
+
+        cout << "\nX_test_meteors: (";
+        for (int i = 0; i < X_test_meteors.dim(); i++)
+        {
+            cout << X_test_meteors.getShape()[i];
+            if (i != X_test_meteors.dim() - 1)
+                cout << ", ";
+        }
+        cout << ")";
+
+        cout << "\ny_test_meteors: (";
+        for (int i = 0; i < y_test_meteors.dim(); i++)
+        {
+            cout << y_test_meteors.getShape()[i];
+            if (i != y_test_meteors.dim() - 1)
                 cout << ", ";
         }
         cout << ")";
@@ -1292,7 +1394,7 @@ int main()
         Tensor TX = Tensor::random({ 5000, 3, 28, 28 });
         Tensor TY = Tensor::random({ 5000, 10 });
 
-        Parameters conv_params = init_conv(cv_stats, pl_stats, TX, TY.getShape()[1]);
+        Parameters conv_params = init_conv(cv_stats, pl_stats, TX, TY.getShape()[1], "relu");
 
         conv_params.W[1].toCPU().print_dims();
 
@@ -1339,7 +1441,7 @@ int main()
             {2, 1, 1, 0}
         };
 
-        /*Parameters cnn_params = init_conv(cv_stats1, mx_stats1, Img, 10);
+        Parameters cnn_params = init_conv(cv_stats1, mx_stats1, Img, 10, "relu");
         numerical_gradient_test(cnn_params, Img, Y_Img, cv_stats1, mx_stats1, "relu");
         AdamState cnn_adam1(cnn_params);
         Forward cnn_frd_cache = conv_frdpass(cnn_params, Img, cv_stats1, mx_stats1, "relu");
@@ -1394,13 +1496,173 @@ int main()
                     ? "MATCH" : "MISMATCH")
                 << "\n";
         }
-        cnn_params = move(adam(cnn_params, cnn_grads, cnn_adam1, 0.01f, 0.9f, 0.999f, 1e-8f));*/
+        cnn_params = move(adam(cnn_params, cnn_grads, cnn_adam1, 0.01f, 0.9f, 0.999f, 1e-8f));
 
         Tensor Imgtest = Img.clone();
         Tensor Y_Imgtest = Y_Img.clone();
 
         Parameters cnn_params_test1 = train_cnn(Img, Imgtest, Y_Img, Y_Imgtest, cv_stats1, mx_stats1, "relu", 0.001f, 1000, 100);
 
+
+        cout << "\n\nCUDA Meteors dataset test\n\n";
+
+        vector<convStats> cv_meteors = {
+            {3, 8, 3, 1, 1, 1},
+            {8, 16, 3, 1, 1, 1},
+            {16, 32, 3, 1, 1, 1}
+        };
+
+        vector<MaxPoolStats> mx_meteors = {
+            {2, 2, 2, 0},
+            {2, 2, 2, 0},
+            {2, 2, 2, 0}
+        };
+
+
+        {
+            cout << "Test1: all 0\n\n";
+
+            start = chrono::high_resolution_clock::now();
+
+            CPUTensor::setSeed(42);
+
+            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "relu", 0.001f, 200, 17);
+
+            cudaDeviceSynchronize();
+
+            end = chrono::high_resolution_clock::now();
+
+            elapsed = end - start;
+
+            cout << "\nTest1 Meteors training time: " << elapsed.count() << " seconds\n";
+        }
+
+        {
+            cout << "\nTest2: dropout = 0.2\n\n";
+
+            start = chrono::high_resolution_clock::now();
+
+            CPUTensor::setSeed(42);
+
+            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "relu", 0.001f, 200, 17, 0.2f);
+
+            cudaDeviceSynchronize();
+
+            end = chrono::high_resolution_clock::now();
+
+            elapsed = end - start;
+
+            cout << "\nTest2 Meteors training time: " << elapsed.count() << " seconds\n";
+        }
+
+        {
+            cout << "\nTest3: L2 = 0.1\n\n";
+
+            start = chrono::high_resolution_clock::now();
+
+            CPUTensor::setSeed(42);
+
+            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "relu", 0.001f, 200, 17, 0.0f, 0.0f, 0.1f);
+
+            cudaDeviceSynchronize();
+
+            end = chrono::high_resolution_clock::now();
+
+            elapsed = end - start;
+
+            cout << "\nTest3 Meteors training time: " << elapsed.count() << " seconds\n";
+        }
+
+        {
+            cout << "\nTest4: dropout = 0.2 + L2 = 0.1\n\n";
+
+            start = chrono::high_resolution_clock::now();
+
+            CPUTensor::setSeed(42);
+
+            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "relu", 0.001f, 200, 17, 0.2f, 0.0f, 0.1f);
+
+            cudaDeviceSynchronize();
+
+            end = chrono::high_resolution_clock::now();
+
+            elapsed = end - start;
+
+            cout << "\nTest4 Meteors training time: " << elapsed.count() << " seconds\n";
+        }
+
+        {
+            cout << "\nTest5: tanh all 0\n\n";
+
+            start = chrono::high_resolution_clock::now();
+
+            CPUTensor::setSeed(42);
+
+            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "tanh", 0.001f, 200, 17);
+
+            cudaDeviceSynchronize();
+
+            end = chrono::high_resolution_clock::now();
+
+            elapsed = end - start;
+
+            cout << "\nTest5 Meteors training time: " << elapsed.count() << " seconds\n";
+        }
+
+        {
+            cout << "\nTest6: tanh dropout = 0.2\n\n";
+
+            start = chrono::high_resolution_clock::now();
+
+            CPUTensor::setSeed(42);
+
+            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "tanh", 0.001f, 200, 17, 0.2f);
+
+            cudaDeviceSynchronize();
+
+            end = chrono::high_resolution_clock::now();
+
+            elapsed = end - start;
+
+            cout << "\nTest6 Meteors training time: " << elapsed.count() << " seconds\n";
+        }
+
+        {
+            cout << "\nTest7: tanh L2 = 0.1\n\n";
+
+            start = chrono::high_resolution_clock::now();
+
+            CPUTensor::setSeed(42);
+
+            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "tanh", 0.001f, 200, 17, 0.0f, 0.0f, 0.1f);
+
+            cudaDeviceSynchronize();
+
+            end = chrono::high_resolution_clock::now();
+
+            elapsed = end - start;
+
+            cout << "\nTest7 Meteors training time: " << elapsed.count() << " seconds\n";
+        }
+
+        {
+            cout << "\nTest8: tanh dropout = 0.2 + L2 = 0.1\n\n";
+
+            start = chrono::high_resolution_clock::now();
+
+            CPUTensor::setSeed(42);
+
+            train_cnn(X_train_meteors.toCUDA(), X_val_meteors.toCUDA(), y_train_meteors.toCUDA(), y_val_meteors.toCUDA(), cv_meteors, mx_meteors, "tanh", 0.001f, 200, 17, 0.2f, 0.0f, 0.1f);
+
+            cudaDeviceSynchronize();
+
+            end = chrono::high_resolution_clock::now();
+
+            elapsed = end - start;
+
+            cout << "\nTest8 Meteors training time: " << elapsed.count() << " seconds\n";
+        }
+        
 
         cout << "\n\nCUDA cifar10 dataset test\n\n";
 
@@ -1418,7 +1680,7 @@ int main()
             {2, 2, 2, 0}
         };
 
-        Parameters cnn_params_test11 = train_cnn(X_train_cnn.toCUDA(), X_test_cnn.toCUDA(), y_train_cnn.toCUDA(), y_test_cnn.toCUDA(), cv_cnn, mx_cnn, "relu", 0.001f, 1000, 100, 0.2f);
+        Parameters cnn_params_test11 = train_cnn(X_train_cnn.toCUDA(), X_test_cnn.toCUDA(), y_train_cnn.toCUDA(), y_test_cnn.toCUDA(), cv_cnn, mx_cnn, "relu", 0.001f, 1000, 100);
 
         cudaDeviceSynchronize();
 
