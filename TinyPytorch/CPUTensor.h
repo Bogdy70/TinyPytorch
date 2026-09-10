@@ -72,4 +72,6 @@ public:
 	//static CPUTensor theMax(const CPUTensor& A, int axis);
 
 	static CPUTensor loadMatrixBin(const std::string& filepath, int rows, int cols);
+
+	static CPUTensor loadTensorBin(const std::string& filepath, const std::vector<int>& shape);
 };

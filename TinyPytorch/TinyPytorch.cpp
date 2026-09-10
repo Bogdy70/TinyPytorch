@@ -62,7 +62,7 @@ float cost(const Tensor& Y, const Tensor& pred, const Parameters& params, const 
 {
     float m = static_cast<float>(Y.getShape()[Y.dim()-1]);
     int L = size(params.W);
-    float epsilon = 1e-8f;
+    float epsilon = 1e-7f;
     float cost = 0.0f;
     float sumw = 0.0f;
     Tensor clippedPred = Tensor::clipT(pred, epsilon, 1.0f - epsilon);
@@ -486,6 +486,262 @@ Parameters train(const Tensor& X_train,
     return params;
 }
 
+Parameters train_cnn(const Tensor& Xtrain,
+    const Tensor& Xtest,
+    const Tensor& ytrain,
+    const Tensor& ytest,
+    const vector<convStats>& cv_stats,
+    const vector<MaxPoolStats>& mx_stats,
+    const string& activation,
+    float lr,
+    int epochs,
+    int viewing_rate,
+    float dropout = 0.0f,
+    float beta1 = 0.9f,
+    float beta2 = 0.999f,
+    float eps = 1e-8f)
+{
+    Parameters cnn_params = init_conv(cv_stats, mx_stats, Xtrain, ytrain.getShape()[0]);
+    AdamState cnn_adam(cnn_params);
+
+    auto start_time = chrono::high_resolution_clock::now();
+
+    for (int epoch = 0; epoch <= epochs; epoch++)
+    {
+        if (epoch % viewing_rate == 0)
+        {
+            cudaDeviceSynchronize();
+
+            Forward train_frd_cache = conv_frdpass(cnn_params, Xtrain, cv_stats, mx_stats, activation);
+            Forward test_frd_cache = conv_frdpass(cnn_params, Xtest, cv_stats, mx_stats, activation);
+
+            float train_cost = cost(ytrain, train_frd_cache.A[size(cnn_params.W) - 1], cnn_params);
+            float train_accuracy = accuracy(ytrain, train_frd_cache.A[size(cnn_params.W) - 1]);
+
+            float test_cost = cost(ytest, test_frd_cache.A[size(cnn_params.W) - 1], cnn_params);
+            float test_accuracy = accuracy(ytest, test_frd_cache.A[size(cnn_params.W) - 1]);
+
+            auto current_time = chrono::high_resolution_clock::now();
+            chrono::duration<double> time = current_time - start_time;
+
+            /*int lastConv = static_cast<int>(cnn_params.W.size()) - 2;
+            int last = lastConv + 1;
+
+            cout << "\nLast conv Z:\n";
+            train_frd_cache.Z[lastConv].toCPU().print();
+
+            cout << "\nLast pooled A:\n";
+            train_frd_cache.A[lastConv].toCPU().print();
+
+            cout << "\nPredictions:\n";
+            train_frd_cache.A[last].toCPU().print();*/
+
+            cout << "Epoch: " << epoch << " || Train cost: " << train_cost << " || Test cost: " << test_cost << " || Train acc: " << train_accuracy * 100.0f << " % || Test acc: " << test_accuracy * 100.0f << " % || Time: " << time.count() << " sec\n";
+        }
+
+        if (epoch == epochs)
+            break;
+
+        Forward cnn_frd_cache = conv_frdpass(cnn_params, Xtrain, cv_stats, mx_stats, activation, dropout);
+        Backward cnn_grads = conv_bckprop(cnn_frd_cache, cnn_params, ytrain, cv_stats, mx_stats, activation, dropout);
+        adam(cnn_params, cnn_grads, cnn_adam, lr, beta1, beta2, eps);
+    }
+
+    return cnn_params;
+}
+
+void numerical_gradient_test(
+    Parameters& params,
+    const Tensor& X,
+    const Tensor& Y,
+    const vector<convStats>& cv_stats,
+    const vector<MaxPoolStats>& mx_stats,
+    const string& activation,
+    float epsilon = 1e-3f,
+    double abs_tolerance = 2e-3,
+    double rel_tolerance = 2e-2)
+{
+    if (epsilon <= 0.0f)
+        throw runtime_error("Epsilon must be positive!");
+
+    auto checkCuda = [](cudaError_t error)
+        {
+            if (error != cudaSuccess)
+                throw runtime_error(cudaGetErrorString(error));
+        };
+
+    auto readTensor = [&](const Tensor& tensor)
+        {
+            size_t count = 1;
+
+            for (int dimension : tensor.getShape())
+                count *= static_cast<size_t>(dimension);
+
+            vector<float> values(count);
+
+            checkCuda(cudaMemcpy(
+                values.data(),
+                tensor.getFloatData(),
+                count * sizeof(float),
+                cudaMemcpyDeviceToHost
+            ));
+
+            return values;
+        };
+
+    auto writeElement = [&](Tensor& tensor, size_t index, float value)
+        {
+            checkCuda(cudaMemcpy(
+                tensor.getFloatData() + index,
+                &value,
+                sizeof(float),
+                cudaMemcpyHostToDevice
+            ));
+        };
+
+    int L = static_cast<int>(params.W.size());
+
+    // Dropout and regularization are disabled throughout this test.
+    auto calculateLoss = [&]() -> double
+        {
+            Forward cache = conv_frdpass(
+                params, X, cv_stats, mx_stats, activation, 0.0f
+            );
+
+            checkCuda(cudaGetLastError());
+            checkCuda(cudaDeviceSynchronize());
+
+            return static_cast<double>(
+                cost(Y, cache.A[L - 1], params, 0.0f, 0.0f)
+                );
+        };
+
+    // Analytical gradients at the original parameter values.
+    Forward cache = conv_frdpass(
+        params, X, cv_stats, mx_stats, activation, 0.0f
+    );
+
+    Backward grads = conv_bckprop(
+        cache, params, Y,
+        cv_stats, mx_stats, activation, 0.0f
+    );
+
+    checkCuda(cudaGetLastError());
+    checkCuda(cudaDeviceSynchronize());
+
+    size_t totalChecked = 0;
+    size_t totalFailed = 0;
+
+    auto oldPrecision = cout.precision();
+    cout << setprecision(8);
+    cout << "\nNumerical gradient test\n";
+
+    for (int l = 1; l < L; l++)
+    {
+        for (bool isBias : { false, true })
+        {
+            Tensor& parameter =
+                isBias ? params.B[l] : params.W[l];
+
+            const Tensor& gradient =
+                isBias ? grads.dB[l] : grads.dW[l];
+
+            string name =
+                string(isBias ? "B[" : "W[") + to_string(l) + "]";
+
+            if (parameter.getShape() != gradient.getShape())
+                throw runtime_error(name + ": gradient shape mismatch!");
+
+            vector<float> original = readTensor(parameter);
+            vector<float> analytical = readTensor(gradient);
+
+            size_t failed = 0;
+            double largestError = 0.0;
+
+            cout << "\n" << name << "\n";
+
+            for (size_t i = 0; i < original.size(); i++)
+            {
+                // Use the actual representable float perturbations.
+                float plusValue = original[i] + epsilon;
+                float minusValue = original[i] - epsilon;
+
+                if (plusValue == minusValue)
+                    throw runtime_error("Epsilon too small for parameter!");
+
+                double plusLoss;
+                double minusLoss;
+
+                try
+                {
+                    writeElement(parameter, i, plusValue);
+                    plusLoss = calculateLoss();
+
+                    writeElement(parameter, i, minusValue);
+                    minusLoss = calculateLoss();
+                }
+                catch (...)
+                {
+                    writeElement(parameter, i, original[i]);
+                    throw;
+                }
+
+                // Restore this parameter before checking the next one.
+                writeElement(parameter, i, original[i]);
+
+                double numerical =
+                    (plusLoss - minusLoss) /
+                    (static_cast<double>(plusValue) - minusValue);
+
+                double backward = analytical[i];
+                double error = std::abs(numerical - backward);
+
+                double allowedError =
+                    abs_tolerance +
+                    rel_tolerance *
+                    std::max(std::abs(numerical), std::abs(backward));
+
+                bool passed =
+                    std::isfinite(numerical) &&
+                    std::isfinite(backward) &&
+                    error <= allowedError;
+
+                if (!passed)
+                    failed++;
+
+                if (std::isfinite(error))
+                    largestError = std::max(largestError, error);
+
+                // Print a few examples, plus every failure.
+                if (i < 3 || !passed)
+                {
+                    cout << "  Element " << i
+                        << " | backward: " << backward
+                        << " | numerical: " << numerical
+                        << " | error: " << error
+                        << " | " << (passed ? "PASS" : "FAIL")
+                        << "\n";
+                }
+            }
+
+            totalChecked += original.size();
+            totalFailed += failed;
+
+            cout << "  Checked: " << original.size()
+                << " | Failed: " << failed
+                << " | Largest finite absolute error: "
+                << largestError << "\n";
+        }
+    }
+
+    cout << "\nOverall: "
+        << (totalFailed == 0 ? "PASS" : "FAIL")
+        << " | Checked: " << totalChecked
+        << " | Failed: " << totalFailed << "\n";
+
+    cout.precision(oldPrecision);
+}
+
 void predict(const CPUTensor& X_test, const CPUTensor& y_test, const Parameters& params, const string& activation, int imgIdx)
 {
     CPUTensor one_mnist({ X_test.getShape()[X_test.dim() - 2], 1 });
@@ -522,7 +778,7 @@ void predict(const CPUTensor& X_test, const CPUTensor& y_test, const Parameters&
     {
         Forward frd_cache1 = forward_pass(params, one_mnist.toCUDA(), activation);
 
-        pred_label = (frd_cache1.A[L - 1] > 0.5f).toCPU()(imgIdx);
+        pred_label = (frd_cache1.A[L - 1] > 0.5f).toCPU()(0);
 
         cout << "\nTruth: " << y_test(imgIdx) << " || Pred: " << pred_label;
     }
@@ -544,6 +800,12 @@ int main()
         CPUTensor X_test_mnist = CPUTensor::loadMatrixBin("data/mnist/X_test.bin", 784, 1000);
         CPUTensor y_test_mnist = CPUTensor::loadMatrixBin("data/mnist/Y_test.bin", 10, 1000);
 
+        CPUTensor X_train_cnn = CPUTensor::loadTensorBin("data/cifar10_cnn/X_train.bin", { 500, 3, 32, 32 });
+        CPUTensor y_train_cnn = CPUTensor::loadTensorBin("data/cifar10_cnn/Y_train.bin", { 10, 500 });
+
+        CPUTensor X_test_cnn = CPUTensor::loadTensorBin("data/cifar10_cnn/X_test.bin", { 100, 3, 32, 32 });
+        CPUTensor y_test_cnn = CPUTensor::loadTensorBin("data/cifar10_cnn/Y_test.bin", { 10, 100 });
+
         cout << "Cat dataset loaded successfully\n";
 
         cout << "X_train_cat: (" << X_train_cat.getShape()[X_train_cat.dim() - 2] << ", " << X_train_cat.getShape()[X_train_cat.dim() - 1] << ")\n";
@@ -558,7 +820,45 @@ int main()
         cout << "y_train_mnist: (" << y_train_mnist.getShape()[y_train_mnist.dim() - 2] << ", " << y_train_mnist.getShape()[y_train_mnist.dim() - 1] << ")\n";
 
         cout << "X_test_mnist: (" << X_test_mnist.getShape()[X_test_mnist.dim() - 2] << ", " << X_test_mnist.getShape()[X_test_mnist.dim() - 1] << ")\n";
-        cout << "y_test_mnist: (" << y_test_mnist.getShape()[y_test_mnist.dim() - 2] << ", " << y_test_mnist.getShape()[y_test_mnist.dim() - 1] << ")\n\n";
+        cout << "y_test_mnist: (" << y_test_mnist.getShape()[y_test_mnist.dim() - 2] << ", " << y_test_mnist.getShape()[y_test_mnist.dim() - 1] << ")\n";
+
+        cout << "\nCifar10 dataset loaded successfully";
+
+        cout << "\nX_train_cnn: (";
+        for (int i = 0; i < X_train_cnn.dim(); i++)
+        {
+            cout << X_train_cnn.getShape()[i];
+            if (i != X_train_cnn.dim() - 1)
+                cout << ", ";
+        }
+        cout << ")";
+
+        cout << "\ny_train_cnn: (";
+        for (int i = 0; i < y_train_cnn.dim(); i++)
+        {
+            cout << y_train_cnn.getShape()[i];
+            if (i != y_train_cnn.dim() - 1)
+                cout << ", ";
+        }
+        cout << ")";
+
+        cout << "\nX_test_cnn: (";
+        for (int i = 0; i < X_test_cnn.dim(); i++)
+        {
+            cout << X_test_cnn.getShape()[i];
+            if (i != X_test_cnn.dim() - 1)
+                cout << ", ";
+        }
+        cout << ")";
+
+        cout << "\ny_test_cnn: (";
+        for (int i = 0; i < y_test_cnn.dim(); i++)
+        {
+            cout << y_test_cnn.getShape()[i];
+            if (i != y_test_cnn.dim() - 1)
+                cout << ", ";
+        }
+        cout << ")";
 
 
         vector<int> dim_list = { X_train_cat.getShape()[X_train_cat.dim() - 2], 100, 100, 200, y_train_cat.getShape()[y_train_cat.dim() - 2] };
@@ -1039,7 +1339,8 @@ int main()
             {2, 1, 1, 0}
         };
 
-        Parameters cnn_params = init_conv(cv_stats1, mx_stats1, Img, 10);
+        /*Parameters cnn_params = init_conv(cv_stats1, mx_stats1, Img, 10);
+        numerical_gradient_test(cnn_params, Img, Y_Img, cv_stats1, mx_stats1, "relu");
         AdamState cnn_adam1(cnn_params);
         Forward cnn_frd_cache = conv_frdpass(cnn_params, Img, cv_stats1, mx_stats1, "relu");
         Backward cnn_grads = conv_bckprop(cnn_frd_cache, cnn_params, Y_Img, cv_stats1, mx_stats1, "relu");
@@ -1093,7 +1394,40 @@ int main()
                     ? "MATCH" : "MISMATCH")
                 << "\n";
         }
-        cnn_params = move(adam(cnn_params, cnn_grads, cnn_adam1, 0.01f, 0.9f, 0.999f, 1e-8f));
+        cnn_params = move(adam(cnn_params, cnn_grads, cnn_adam1, 0.01f, 0.9f, 0.999f, 1e-8f));*/
+
+        Tensor Imgtest = Img.clone();
+        Tensor Y_Imgtest = Y_Img.clone();
+
+        Parameters cnn_params_test1 = train_cnn(Img, Imgtest, Y_Img, Y_Imgtest, cv_stats1, mx_stats1, "relu", 0.001f, 1000, 100);
+
+
+        cout << "\n\nCUDA cifar10 dataset test\n\n";
+
+        start = chrono::high_resolution_clock::now();
+
+        CPUTensor::setSeed(42);
+
+        vector<convStats> cv_cnn = {
+            {3, 8, 3, 1, 1, 1},
+            {8, 16, 3, 1, 1, 1}
+        };
+
+        vector<MaxPoolStats> mx_cnn = {
+            {2, 2, 2, 0},
+            {2, 2, 2, 0}
+        };
+
+        Parameters cnn_params_test11 = train_cnn(X_train_cnn.toCUDA(), X_test_cnn.toCUDA(), y_train_cnn.toCUDA(), y_test_cnn.toCUDA(), cv_cnn, mx_cnn, "relu", 0.001f, 1000, 100, 0.2f);
+
+        cudaDeviceSynchronize();
+
+        end = chrono::high_resolution_clock::now();
+
+        elapsed = end - start;
+
+        cout << "\nCUDA cifar10 training time: " << elapsed.count() << " seconds\n";
+
 
         cout << "\n\nCUDA cat dataset test\n\n";
 

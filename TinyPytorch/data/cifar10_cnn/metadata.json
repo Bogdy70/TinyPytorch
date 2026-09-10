@@ -1,0 +1,44 @@
+{
+  "dataset": "CIFAR-10",
+  "seed": 42,
+  "dtype": "little-endian float32",
+  "header_bytes": 0,
+  "image_layout": "NCHW",
+  "label_layout": "classes,samples",
+  "normalization": "pixel / 255.0",
+  "shapes": {
+    "X_train": [
+      500,
+      3,
+      32,
+      32
+    ],
+    "Y_train": [
+      10,
+      500
+    ],
+    "X_test": [
+      100,
+      3,
+      32,
+      32
+    ],
+    "Y_test": [
+      10,
+      100
+    ]
+  },
+  "classes": [
+    "airplane",
+    "automobile",
+    "bird",
+    "cat",
+    "deer",
+    "dog",
+    "frog",
+    "horse",
+    "ship",
+    "truck"
+  ],
+  "source": "https://www.cs.toronto.edu/~kriz/cifar.html"
+}
